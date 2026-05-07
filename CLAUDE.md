@@ -1,132 +1,145 @@
-# Natural Language Agent Builder 
+# Natural Language Agent Builder
 
-The goal of this project is to create a simply ReACT Style with an Perception Action Loop but the agent takes in all of its context goals from a local directory and is able to actually code its own tools. 
+A ReACT-style agent that reads its goals and context from a local directory and can write its own tools as JavaScript. Users create a directory with a `SystemPrompt.md`, point the CLI at it, and chat — the agent uses Deno to read/write files, call APIs, and persist reusable tools as `.js` modules.
 
-# High Level Architecture
+Pydantic-AI docs are available locally at `pydantic-documentation/pydantic-ai/`.
 
-Under the hood we have a simple agent in a pydantic ai. 
-
-You can access documentation for pydantic-AI at @pydantic-documentation/pydantic-ai
-
-1. invocation: invocation getsin the user prompt, message history and creates the initial state for that turn, it ensures the user has passed a valid "execute_directory" the agent will treat that as ROOT 
-
-the sytem prompt is sourced from the SystemPrompt.md at the execute_directory
-
-During Invocation a state obeject should be created AND we should create a Javascript runtime (powered by deno which will be used by the tool call )
-
-2. Tools: 
-
-The agent has ONLY 1 tool.
-
- 
-`execute_js`: allows the agent to write Javascript Arrow function that is run on the Deno platform. During the invocation ste
-
-
-3. Deno environment: 
-
-The deno environment should use `deno run` with a strict set of permissions `--allow-read=<execute_directory> --allow-write<execute_directory> --deny-read=.env`
-
-the allow read should be customized to ONLY load JS/TS,JSON/YAML/YML and Markdown files 
-
-we should also have --allow-net to get a user list of domains that is passed in via invocation
-
-**Environment Variables**
-
-We should allow the deno execution environment to have access to any environment variable with a `NL_PY_` prefix
-
-**Built in Funcitons**  
-
-with in the JS Deno Runtime we should add to global the following tools/functions which agent can invoke
-
-`cat`: to read files
-`find`: to find files 
-`grep`: to find text 
-`tree`: to understand the files available for context. 
-`write`: to create a new file or overwrite a new file
-`search_and_replace`: to change the text of a new file
-
-The agent can also write arrow functions which can be executed 
+## Source layout
 
 ```
+src/nl_agent/
+  __init__.py     # entry point → calls cli()
+  cli.py          # Click CLI: `serve` and `run` commands
+  agent.py        # pydantic-ai Agent, AgentDeps, execute_js tool
+  execute_js.py   # Deno subprocess runner + embedded built-in JS tools
+  serve.py        # FastAPI app: POST /agent (AG-UI) + Gradio UI at /
+examples/
+  economic-advisor/   # example exec_dir using the FRED API
+```
+
+## CLI usage
+
+```bash
+# Interactive server (Gradio UI at http://localhost:9101)
+nl-agent serve --exec-dir ./my-agent [--allowed-domains api.example.com,other.com] [--port 9101]
+
+# Single-turn run
+nl-agent run --exec-dir ./my-agent --prompt "Show me the directory tree"
+```
+
+## Creating an agent directory
+
+Minimum: a single `SystemPrompt.md`. Optionally add `.js` files that export functions — they are auto-loaded as globals on every `execute_js` call.
+
+```
+my-agent/
+  SystemPrompt.md      # loaded as agent instructions every turn
+  tools.js             # (optional) agent-authored or hand-written JS tools
+```
+
+## Architecture
+
+### Invocation
+
+Each turn the agent receives the user prompt and message history. `AgentDeps` holds `exec_dir` and `allowed_domains`. The system prompt is assembled dynamically: static tool documentation + the contents of `SystemPrompt.md` (missing file is silently ignored).
+
+### Single tool: `execute_js`
+
+The agent writes a JavaScript arrow function string; the Python runtime wraps it in a Deno script and runs it as a subprocess. The tool returns stdout (or stderr with exit code on failure).
+
+```js
+// example call from the agent
 async () => {
-  const data = await fred.request({
-    method: 'GET',
-    path: '/fred/series/observations',
-    params: { series_id: 'GDP' }
-  });
-  return data;
+  return await tree(3);
 }
 ```
 
-the JS/Deno runtime should also run and execute any JS files it identifies in the execution_directory. This effectively allows the agent to write its own tools. 
+### Deno environment
 
-# User Journey. 
+Subprocess is launched with:
+- `--allow-read=<exec_dir>` — read access scoped to the exec directory
+- `--allow-write=<exec_dir>` — write access scoped to the exec directory
+- `--deny-read=.env` — blocks reading `.env` files
+- `--allow-net=<domains>` — only when `--allowed-domains` is passed
+- `--allow-env=NL_PY_*` — only the `NL_PY_` keys present in the Python process env
 
-Pretend the user wants to write an application that trades stocks. 
+The runner script is written to `<exec_dir>/_runner_<uuid>.js` (within the allowed-write path) and deleted after execution. Files starting with `_runner_` are never imported as user tools.
 
-1. User creates an empty directory "stock_trader"
-2. within "stock_trader" the user authors a System prompt about the trading strategy. 
-3. the add an environment variable NL_PY_ALPACA_TOKEN which contains authentication tokens for the Alpaca trading service. 
-4. The user runs a command in cli "nl-agent serve  --exec_dir "./stock_trader" a fastapi server starts and the user visits http://localhost:9101 and sees a simple chat interface. 
-5. THe user enters "Go ahead and connect to Alpaca and make sure you can make trades on our account" the agent is then invoked via AG-UI
+**Environment variables:** prefix any env var with `NL_PY_` and the agent can read it via `Deno.env.get('NL_PY_YOUR_VAR')`.
 
+### Built-in globals
 
-now the agent does the following 
+Every execution gets these as globals (implemented in `execute_js.py`):
 
-6. takes in the user input and begins a turn with the agent. 
+| Function | Description |
+|----------|-------------|
+| `cat(path)` | Read file contents |
+| `find(pattern, dir?)` | Find files by name/substring |
+| `grep(text, path)` | Search for text in a file or directory |
+| `tree(depth?, dir?)` | Directory tree (default depth 2) |
+| `write(path, content)` | Create or overwrite a file |
+| `search_and_replace(path, search, replace)` | Edit a file in-place |
 
-7. The Agent identifies SystemPrompt.md. The agent (pydantic ai) adds in some information about how to use the execute-js tool including documentation of the file directory functions `cat`, `find` etc. 
+### Self-extending tools
 
-8. The agent writes JS 
+Any `.js` file in `exec_dir` that exports named functions has those exports injected as globals before the user's arrow function runs. The agent can write its own tool file:
 
-`execute_js(tree(3))` and gets back 
-```
-|
---SystemPrompt.md
-```
-
-the agent then tests functionality to alpaca somehting like 
-
-```
+```js
 async () => {
-  const token = Deno.env.get('NL_PY_ALPACA_TOKEN');
-  
-  if (!token) {
-    throw new Error('Environment variable NL_PY_ALPACA_TOKEN is not set.');
-  }
-
-  const response = await fetch('https://paper-api.alpaca.markets/v2/account', {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/json'
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Alpaca API Error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  
-  // Return the full account data
-  return data;
+  await write('tools.js', `
+export async function fetchGDP() {
+  const key = Deno.env.get('NL_PY_FRED_API_KEY');
+  const res = await fetch(\`https://api.stlouisfed.org/fred/series/observations?series_id=GDP&api_key=\${key}&file_type=json\`);
+  return res.json();
+}
+`);
+  return 'tools.js written';
 }
 ```
 
-9. Now that this works the agent authors tools.js which is saved in the execute directory 
+On the next turn `fetchGDP` is available as a global.
 
+### Server endpoints
 
+- `POST /agent` — AG-UI endpoint, consumed by AG-UI frontend clients
+- `GET /` — Gradio chat UI for direct browser testing
+
+## Model configuration
+
+Set these env vars before running:
+
+```bash
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=...   # optional, for proxies or compatible providers
+export OPENAI_MODEL_NAME=gpt-4o   # default if unset
 ```
-write('tools.js', <TEXT OF JS FUNCITONs>)
+
+## User journey example (stock trader)
+
+1. Create `stock_trader/SystemPrompt.md` describing the trading strategy
+2. `export NL_PY_ALPACA_TOKEN=<your-token>`
+3. `nl-agent serve --exec-dir ./stock_trader --allowed-domains paper-api.alpaca.markets`
+4. Visit `http://localhost:9101`
+5. Ask "Connect to Alpaca and verify the account"
+6. Agent calls `tree()` to orient, writes JS to test the Alpaca API, then saves `tools.js` with trading functions
+7. On subsequent turns `tools.js` functions are auto-loaded as globals
+
+## Examples
+
+### `examples/economic-advisor`
+
+Uses the FRED API. Requires `NL_PY_FRED_API_KEY`. Ships with `fred-client.js` (a pre-written FRED client that becomes a global) and `fred-openApi.yaml` for the agent to reference.
+
+```bash
+export NL_PY_FRED_API_KEY=<your-key>
+nl-agent serve --exec-dir examples/economic-advisor --allowed-domains api.stlouisfed.org
 ```
 
-this allos the agent to have functions for trading right off the bat on the next turn tools.js should already be loaded. 
+## Development
 
-10. agent fetches data and returns repsonse to user. 
-
-
-## Implementation details
-
-this project uses uv so to add packages use `uv add` and then use `uv build` to test builds . 
+```bash
+uv add <package>    # add a dependency
+uv build            # verify the package builds
+uv run nl-agent … # run from the local venv
+```
 

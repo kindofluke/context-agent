@@ -1,5 +1,7 @@
+import asyncio
 import os
 from dataclasses import dataclass, field
+from typing import Optional
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
@@ -68,6 +70,7 @@ On your **next** `execute_js` call, `myTool` will be available as a global.
 class AgentDeps:
     exec_dir: str
     allowed_domains: list[str] = field(default_factory=list)
+    tool_calls_queue: Optional[asyncio.Queue] = field(default=None)
 
 
 def _make_model() -> OpenAIModel:
@@ -107,4 +110,6 @@ async def execute_js(ctx: RunContext[AgentDeps], js_code: str) -> str:
     Returns:
         The stdout output from Deno, or an error message.
     """
+    if ctx.deps.tool_calls_queue is not None:
+        await ctx.deps.tool_calls_queue.put(("tool_call", js_code))
     return await run_js(ctx.deps.exec_dir, js_code, ctx.deps.allowed_domains)
