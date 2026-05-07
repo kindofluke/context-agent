@@ -1,8 +1,6 @@
-import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Optional
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
@@ -88,7 +86,6 @@ Right:
 class AgentDeps:
     exec_dir: str
     allowed_domains: list[str] = field(default_factory=list)
-    tool_calls_queue: Optional[asyncio.Queue] = field(default=None)
 
 
 def _make_model() -> OpenAIModel:
@@ -118,6 +115,9 @@ def _load_system_prompt(ctx: RunContext[AgentDeps]) -> str:
         return ""
 
 
+_MAX_RESULT_CHARS = 20_000
+
+
 @agent.tool
 async def execute_js(ctx: RunContext[AgentDeps], js_code: str) -> str:
     """Execute a JavaScript arrow function in the Deno runtime.
@@ -129,8 +129,10 @@ async def execute_js(ctx: RunContext[AgentDeps], js_code: str) -> str:
         The stdout output from Deno, or an error message.
     """
     logger.info("execute_js called:\n%s", js_code)
-    if ctx.deps.tool_calls_queue is not None:
-        await ctx.deps.tool_calls_queue.put(("tool_call", js_code))
     result = await run_js(ctx.deps.exec_dir, js_code, ctx.deps.allowed_domains)
-    logger.info("execute_js result: %s", result[:200] if len(result) > 200 else result)
+    if len(result) > _MAX_RESULT_CHARS:
+        original_len = len(result)
+        result = result[:_MAX_RESULT_CHARS] + f"\n... [truncated: {original_len - _MAX_RESULT_CHARS} chars omitted]"
+        logger.warning("execute_js result truncated from %d to %d chars", original_len, _MAX_RESULT_CHARS)
+    logger.info("execute_js result (%d chars): %s", len(result), result[:200])
     return result

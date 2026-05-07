@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import asyncio
+import json
 import logging
 import logging.config
+import uuid as uuid_module
 from typing import AsyncGenerator
 
 import gradio as gr
+from ag_ui.core import AssistantMessage, EventType, RunAgentInput, UserMessage
 from fastapi import FastAPI
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 from starlette.requests import Request
 from starlette.responses import Response
@@ -30,11 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_text(content: object) -> str:
-    """Normalise Gradio content to a plain string.
-
-    Gradio can give us a str, a list of {"type":"text","text":"..."} dicts
-    (multimodal format), or a bare dict — flatten all of these to text.
-    """
+    """Normalise Gradio content to a plain string."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -47,16 +44,14 @@ def _extract_text(content: object) -> str:
     return str(content)
 
 
-def _gradio_history_to_pydantic(
-    history: list[dict],
-) -> list[ModelRequest | ModelResponse]:
-    messages: list[ModelRequest | ModelResponse] = []
+def _gradio_history_to_agui(history: list[dict], current_message: str) -> list:
+    """Convert Gradio chat history + current message to a list of AG-UI Message objects."""
+    msgs = []
     for item in history:
         role = item.get("role") if isinstance(item, dict) else item[0]
         raw_content = item.get("content") if isinstance(item, dict) else item[1]
         metadata = item.get("metadata") if isinstance(item, dict) else None
-        # Skip tool-call accordion messages — they're display-only, not real assistant text
-        if metadata:
+        if metadata:  # tool-call accordion — display only, not real history
             continue
         if not raw_content:
             continue
@@ -64,10 +59,11 @@ def _gradio_history_to_pydantic(
         if not content:
             continue
         if role == "user":
-            messages.append(ModelRequest(parts=[UserPromptPart(content=content)]))
+            msgs.append(UserMessage(id=str(uuid_module.uuid4()), content=content))
         elif role == "assistant":
-            messages.append(ModelResponse(parts=[TextPart(content=content)]))
-    return messages
+            msgs.append(AssistantMessage(id=str(uuid_module.uuid4()), content=content))
+    msgs.append(UserMessage(id=str(uuid_module.uuid4()), content=current_message))
+    return msgs
 
 
 def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastAPI:
@@ -84,60 +80,86 @@ def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastA
         message: str, history: list[dict]
     ) -> AsyncGenerator[list, None]:
         logger.info("chat_fn invoked: message=%r, history_len=%d", message, len(history))
-        queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
-        deps = AgentDeps(exec_dir=exec_dir, allowed_domains=domains, tool_calls_queue=queue)
-        pydantic_history = _gradio_history_to_pydantic(history)
-        logger.info("Converted %d history items → %d pydantic messages", len(history), len(pydantic_history))
 
-        messages: list[dict] = []
-        accumulated_text = ""
-        text_started = False
+        ag_ui_messages = _gradio_history_to_agui(history, message)
+        logger.info("Built %d AG-UI messages", len(ag_ui_messages))
 
-        async def run() -> None:
-            try:
-                logger.info("Agent run_stream starting")
-                async with agent.run_stream(
-                    message, deps=deps, message_history=pydantic_history
-                ) as result:
-                    async for delta in result.stream_text(delta=True):
-                        logger.debug("Stream delta: %r", delta)
-                        await queue.put(("text", delta))
-                logger.info("Agent run_stream complete")
-            except Exception:
-                logger.exception("Agent run_stream failed")
-            finally:
-                await queue.put(None)
+        run_input = RunAgentInput(
+            thread_id=str(uuid_module.uuid4()),
+            run_id=str(uuid_module.uuid4()),
+            state={},
+            messages=ag_ui_messages,
+            tools=[],
+            context=[],
+            forwarded_props=None,
+        )
+        deps = AgentDeps(exec_dir=exec_dir, allowed_domains=domains)
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
-        task = asyncio.create_task(run())
+        gradio_messages: list[dict] = []
+        text_msg_index: dict[str, int] = {}  # message_id -> index in gradio_messages
+        tool_args_buf: dict[str, str] = {}   # tool_call_id -> accumulated JSON args
+        tool_msg_index: dict[str, int] = {}  # tool_call_id -> index in gradio_messages
 
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
+        try:
+            async for event in adapter.run_stream(deps=deps):
+                etype = event.type
+                logger.debug("AG-UI event: %s", etype)
 
-            kind, value = item
-            if kind == "tool_call":
-                logger.info("Tool call received from queue")
-                messages.append({
-                    "role": "assistant",
-                    "content": f"```javascript\n{value}\n```",
-                    "metadata": {"title": "🔧 execute_js", "status": "pending"},
-                })
-                yield messages
-            elif kind == "text":
-                if not text_started:
-                    for msg in messages:
+                if etype == EventType.TEXT_MESSAGE_START:
+                    logger.info("Text message start: id=%s", event.message_id)
+                    for msg in gradio_messages:
                         if msg.get("metadata", {}).get("status") == "pending":
                             msg["metadata"]["status"] = "done"
-                    messages.append({"role": "assistant", "content": ""})
-                    text_started = True
-                accumulated_text += value
-                messages[-1] = {"role": "assistant", "content": accumulated_text}
-                yield messages
+                    text_msg_index[event.message_id] = len(gradio_messages)
+                    gradio_messages.append({"role": "assistant", "content": ""})
 
-        logger.info("chat_fn stream done, final message count=%d", len(messages))
-        yield messages
-        await task
+                elif etype == EventType.TEXT_MESSAGE_CONTENT:
+                    idx = text_msg_index.get(event.message_id)
+                    if idx is not None:
+                        gradio_messages[idx]["content"] += event.delta
+                        yield gradio_messages
+
+                elif etype == EventType.TOOL_CALL_START:
+                    logger.info("Tool call start: %s (id=%s)", event.tool_call_name, event.tool_call_id)
+                    tool_args_buf[event.tool_call_id] = ""
+                    tool_msg_index[event.tool_call_id] = len(gradio_messages)
+                    gradio_messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "metadata": {"title": f"🔧 {event.tool_call_name}", "status": "pending"},
+                    })
+                    yield gradio_messages
+
+                elif etype == EventType.TOOL_CALL_ARGS:
+                    tool_args_buf[event.tool_call_id] = tool_args_buf.get(event.tool_call_id, "") + event.delta
+
+                elif etype == EventType.TOOL_CALL_END:
+                    tid = event.tool_call_id
+                    logger.info("Tool call end: id=%s", tid)
+                    idx = tool_msg_index.get(tid)
+                    if idx is not None:
+                        try:
+                            args = json.loads(tool_args_buf.get(tid, "{}"))
+                            js_code = args.get("js_code", tool_args_buf.get(tid, ""))
+                        except (json.JSONDecodeError, KeyError):
+                            js_code = tool_args_buf.get(tid, "")
+                        gradio_messages[idx]["content"] = f"```javascript\n{js_code}\n```"
+                        yield gradio_messages
+
+                elif etype == EventType.RUN_FINISHED:
+                    logger.info("Run finished")
+                    break
+
+                elif etype == EventType.RUN_ERROR:
+                    logger.error("Run error: %s", event.message)
+                    gradio_messages.append({"role": "assistant", "content": f"Error: {event.message}"})
+                    break
+
+        except Exception:
+            logger.exception("chat_fn failed")
+
+        yield gradio_messages
 
     gradio_blocks = gr.ChatInterface(
         fn=chat_fn,

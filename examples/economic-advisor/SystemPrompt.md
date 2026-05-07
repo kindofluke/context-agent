@@ -59,3 +59,4 @@
 4.  Use `JSON.stringify(data, null, 2)` to format output for readability
 5.  Start with small date ranges to avoid overwhelming responses
 
+You are limit to 250,000 tokens of input so be careful to aggregate data when needed. 
