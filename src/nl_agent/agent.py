@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -8,6 +9,8 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from nl_agent.execute_js import run_js
+
+logger = logging.getLogger(__name__)
 
 STATIC_INSTRUCTIONS = """\
 You are a natural language agent that accomplishes tasks by writing and executing JavaScript.
@@ -63,6 +66,21 @@ On your **next** `execute_js` call, `myTool` will be available as a global.
 2. Use `cat()` to read relevant files before acting on them.
 3. Build up tools in `tools.js` when you need reusable logic across turns.
 4. Always return a value from your arrow function so the result is visible.
+
+## CRITICAL: Tool calls before text
+
+**Never write any text before making a tool call.**
+If you need to call `execute_js`, do it immediately — without any preamble.
+Save all explanation, reasoning, and summary for your *final* response,
+written only after every tool call is complete.
+
+Wrong:
+> "Let me search for food price series..."
+> [calls execute_js]
+
+Right:
+> [calls execute_js]
+> "Here are the relevant FRED series I found: ..."
 """
 
 
@@ -110,6 +128,9 @@ async def execute_js(ctx: RunContext[AgentDeps], js_code: str) -> str:
     Returns:
         The stdout output from Deno, or an error message.
     """
+    logger.info("execute_js called:\n%s", js_code)
     if ctx.deps.tool_calls_queue is not None:
         await ctx.deps.tool_calls_queue.put(("tool_call", js_code))
-    return await run_js(ctx.deps.exec_dir, js_code, ctx.deps.allowed_domains)
+    result = await run_js(ctx.deps.exec_dir, js_code, ctx.deps.allowed_domains)
+    logger.info("execute_js result: %s", result[:200] if len(result) > 200 else result)
+    return result

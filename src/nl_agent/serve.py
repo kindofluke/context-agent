@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import logging.config
 from typing import AsyncGenerator
 
 import gradio as gr
@@ -12,6 +14,38 @@ from starlette.responses import Response
 
 from nl_agent.agent import AgentDeps, agent
 
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "simple"},
+    },
+    "root": {"level": "INFO", "handlers": ["console"]},
+})
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_text(content: object) -> str:
+    """Normalise Gradio content to a plain string.
+
+    Gradio can give us a str, a list of {"type":"text","text":"..."} dicts
+    (multimodal format), or a bare dict — flatten all of these to text.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            item["text"] if isinstance(item, dict) and item.get("type") == "text" else str(item)
+            for item in content
+        )
+    if isinstance(content, dict) and content.get("type") == "text":
+        return content["text"]
+    return str(content)
+
 
 def _gradio_history_to_pydantic(
     history: list[dict],
@@ -19,11 +53,14 @@ def _gradio_history_to_pydantic(
     messages: list[ModelRequest | ModelResponse] = []
     for item in history:
         role = item.get("role") if isinstance(item, dict) else item[0]
-        content = item.get("content") if isinstance(item, dict) else item[1]
+        raw_content = item.get("content") if isinstance(item, dict) else item[1]
         metadata = item.get("metadata") if isinstance(item, dict) else None
         # Skip tool-call accordion messages — they're display-only, not real assistant text
         if metadata:
             continue
+        if not raw_content:
+            continue
+        content = _extract_text(raw_content)
         if not content:
             continue
         if role == "user":
@@ -46,21 +83,30 @@ def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastA
     async def chat_fn(
         message: str, history: list[dict]
     ) -> AsyncGenerator[list, None]:
+        logger.info("chat_fn invoked: message=%r, history_len=%d", message, len(history))
         queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
         deps = AgentDeps(exec_dir=exec_dir, allowed_domains=domains, tool_calls_queue=queue)
         pydantic_history = _gradio_history_to_pydantic(history)
+        logger.info("Converted %d history items → %d pydantic messages", len(history), len(pydantic_history))
 
         messages: list[dict] = []
         accumulated_text = ""
         text_started = False
 
         async def run() -> None:
-            async with agent.run_stream(
-                message, deps=deps, message_history=pydantic_history
-            ) as result:
-                async for delta in result.stream_text(delta=True):
-                    await queue.put(("text", delta))
-            await queue.put(None)
+            try:
+                logger.info("Agent run_stream starting")
+                async with agent.run_stream(
+                    message, deps=deps, message_history=pydantic_history
+                ) as result:
+                    async for delta in result.stream_text(delta=True):
+                        logger.debug("Stream delta: %r", delta)
+                        await queue.put(("text", delta))
+                logger.info("Agent run_stream complete")
+            except Exception:
+                logger.exception("Agent run_stream failed")
+            finally:
+                await queue.put(None)
 
         task = asyncio.create_task(run())
 
@@ -71,6 +117,7 @@ def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastA
 
             kind, value = item
             if kind == "tool_call":
+                logger.info("Tool call received from queue")
                 messages.append({
                     "role": "assistant",
                     "content": f"```javascript\n{value}\n```",
@@ -88,6 +135,7 @@ def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastA
                 messages[-1] = {"role": "assistant", "content": accumulated_text}
                 yield messages
 
+        logger.info("chat_fn stream done, final message count=%d", len(messages))
         yield messages
         await task
 

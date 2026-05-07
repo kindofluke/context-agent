@@ -9,3 +9,5 @@ wheels/
 # Virtual environments
 .venv
 pydantic-documentation
+src/nl_agent/agent.py
+.env
