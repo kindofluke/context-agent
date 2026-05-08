@@ -11,3 +11,4 @@ wheels/
 pydantic-documentation
 src/nl_agent/agent.py
 .env
+.DS_Store
