@@ -104,12 +104,19 @@ async function search_and_replace(path, search, replace) {
   return `Replaced ${count} occurrence(s) in ${fullPath}`;
 }
 
+async function mkdir(path) {
+  const fullPath = _resolvePath(path);
+  await Deno.mkdir(fullPath, { recursive: true });
+  return `Created: ${fullPath}`;
+}
+
 globalThis.cat = cat;
 globalThis.find = find;
 globalThis.grep = grep;
 globalThis.tree = tree;
 globalThis.write = write;
 globalThis.search_and_replace = search_and_replace;
+globalThis.mkdir = mkdir;
 """
 
 _USER_TOOLS_LOADER = r"""
@@ -134,6 +141,7 @@ for await (const __entry of Deno.readDir("__EXEC_DIR__")) {
 
 
 async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str]) -> str:
+    exec_dir = os.path.realpath(exec_dir)
     runner_name = f"_runner_{uuid.uuid4().hex}.js"
     runner_path = os.path.join(exec_dir, runner_name)
 

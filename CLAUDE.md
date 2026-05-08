@@ -79,6 +79,7 @@ Every execution gets these as globals (implemented in `execute_js.py`):
 | `tree(depth?, dir?)` | Directory tree (default depth 2) |
 | `write(path, content)` | Create or overwrite a file |
 | `search_and_replace(path, search, replace)` | Edit a file in-place |
+| `mkdir(path)` | Create a directory (and parents) |
 
 ### Self-extending tools
 

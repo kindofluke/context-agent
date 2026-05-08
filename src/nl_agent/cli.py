@@ -24,7 +24,7 @@ def serve(exec_dir: str, allowed_domains: str, port: int, host: str) -> None:
 
     from nl_agent.serve import create_app
 
-    exec_dir = os.path.abspath(exec_dir)
+    exec_dir = os.path.realpath(exec_dir)
     if not os.path.isdir(exec_dir):
         raise click.BadParameter(
             f"Directory does not exist: {exec_dir}", param_hint="--exec-dir"
@@ -50,7 +50,7 @@ def run(exec_dir: str, prompt: str, allowed_domains: str) -> None:
     """Run a single prompt through the agent and print the result."""
     from nl_agent.agent import AgentDeps, agent
 
-    exec_dir = os.path.abspath(exec_dir)
+    exec_dir = os.path.realpath(exec_dir)
     if not os.path.isdir(exec_dir):
         raise click.BadParameter(
             f"Directory does not exist: {exec_dir}", param_hint="--exec-dir"
