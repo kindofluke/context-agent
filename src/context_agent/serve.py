@@ -13,7 +13,7 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 from starlette.requests import Request
 from starlette.responses import Response
 
-from nl_agent.agent import AgentDeps, agent
+from context_agent.agent import AgentDeps, agent
 
 logging.config.dictConfig({
     "version": 1,
@@ -69,7 +69,7 @@ def _gradio_history_to_agui(history: list[dict], current_message: str) -> list:
 def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastAPI:
     domains = allowed_domains or []
 
-    app = FastAPI(title="nl-agent")
+    app = FastAPI(title="context-agent")
 
     @app.post("/agent")
     async def run_agent_endpoint(request: Request) -> Response:

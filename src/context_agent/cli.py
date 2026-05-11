@@ -6,7 +6,7 @@ import click
 
 @click.group()
 def cli() -> None:
-    """NL Agent — natural language agent builder."""
+    """Context Agent — natural language agent builder."""
 
 
 @cli.command()
@@ -19,10 +19,10 @@ def cli() -> None:
 @click.option("--port", default=9101, show_default=True, help="Port to listen on")
 @click.option("--host", default="0.0.0.0", show_default=True, help="Host to bind to")
 def serve(exec_dir: str, allowed_domains: str, port: int, host: str) -> None:
-    """Start the nl-agent server with web UI."""
+    """Start the context-agent server with web UI."""
     import uvicorn
 
-    from nl_agent.serve import create_app
+    from context_agent.serve import create_app
 
     exec_dir = os.path.realpath(exec_dir)
     if not os.path.isdir(exec_dir):
@@ -33,7 +33,7 @@ def serve(exec_dir: str, allowed_domains: str, port: int, host: str) -> None:
     domains = [d.strip() for d in allowed_domains.split(",") if d.strip()]
     app = create_app(exec_dir=exec_dir, allowed_domains=domains)
 
-    click.echo(f"Starting nl-agent at http://{host}:{port}")
+    click.echo(f"Starting context-agent at http://{host}:{port}")
     click.echo(f"  exec_dir: {exec_dir}")
     uvicorn.run(app, host=host, port=port)
 
@@ -48,7 +48,7 @@ def serve(exec_dir: str, allowed_domains: str, port: int, host: str) -> None:
 )
 def run(exec_dir: str, prompt: str, allowed_domains: str) -> None:
     """Run a single prompt through the agent and print the result."""
-    from nl_agent.agent import AgentDeps, agent
+    from context_agent.agent import AgentDeps, agent
 
     exec_dir = os.path.realpath(exec_dir)
     if not os.path.isdir(exec_dir):

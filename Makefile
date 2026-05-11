@@ -1,5 +1,5 @@
 DENO_VERSION := 2.6.6
-DENO_BIN     := src/nl_agent/bin/deno
+DENO_BIN     := src/context_agent/bin/deno
 
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
@@ -30,16 +30,16 @@ build: $(DENO_BIN) $(PY_SOURCES)
 	uv build
 
 ## Download the Deno binary for the current platform
-$(DENO_BIN): | src/nl_agent/bin
+$(DENO_BIN): | src/context_agent/bin
 	curl -fsSL $(DENO_URL) -o /tmp/deno-download.zip
-	unzip -o /tmp/deno-download.zip deno -d src/nl_agent/bin/
+	unzip -o /tmp/deno-download.zip deno -d src/context_agent/bin/
 	chmod +x $(DENO_BIN)
 	rm /tmp/deno-download.zip
 
 deno-download: $(DENO_BIN)
 
-src/nl_agent/bin:
-	mkdir -p src/nl_agent/bin
+src/context_agent/bin:
+	mkdir -p src/context_agent/bin
 
 clean:
-	rm -rf dist/ src/nl_agent/bin/deno src/nl_agent/bin/deno.exe
+	rm -rf dist/ src/context_agent/bin/deno src/context_agent/bin/deno.exe

@@ -29,7 +29,7 @@
 **Available Resources:**
 *   **`fred-openApi.yaml`:** Complete FRED API specification with 30+ endpoints. Use `cat` or `rg` to explore it.
 
-*   **Environment:** Your FRED_API_KEY is loaded from the `NL_PY_FRED_API_KEY` environment variable.
+*   **Environment:** Your FRED_API_KEY is loaded from the `CT_PY_FRED_API_KEY` environment variable (or legacy `NL_PY_FRED_API_KEY`).
 
 **Common FRED Series IDs:**
 *   `GDP` - Gross Domestic Product

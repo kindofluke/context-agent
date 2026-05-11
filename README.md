@@ -1,4 +1,4 @@
-# nl-agent
+# context-agent
 
 A natural language agent builder that lets you create AI-powered applications by dropping a `SystemPrompt.md` into a directory. The agent reasons and acts by writing and executing JavaScript in a sandboxed Deno runtime — no Deno installation required, it's bundled with the package.
 
@@ -27,7 +27,7 @@ uv pip install -e .
 ### Start the web UI
 
 ```bash
-nl-agent serve --exec-dir ./my-agent-dir
+ct-agent serve --exec-dir ./my-agent-dir
 ```
 
 Options:
@@ -41,7 +41,7 @@ Visit `http://localhost:9101` for the chat interface.
 ### Single-turn run
 
 ```bash
-nl-agent run --exec-dir ./my-agent-dir --prompt "Summarise the latest GDP data"
+ct-agent run --exec-dir ./my-agent-dir --prompt "Summarise the latest GDP data"
 ```
 
 ## Agent directory conventions
@@ -51,7 +51,7 @@ nl-agent run --exec-dir ./my-agent-dir --prompt "Summarise the latest GDP data"
 | `SystemPrompt.md` | Loaded as the agent's system prompt each turn |
 | `tools.js` | Agent-authored JS module; exports are available as globals on the next turn |
 | `*.js` | Any JS file in the directory is auto-loaded as a module |
-| `NL_PY_*` env vars | Passed into the Deno sandbox; access via `Deno.env.get('NL_PY_...')` |
+| `CT_PY_*` / `NL_PY_*` env vars | Passed into the Deno sandbox; access via `Deno.env.get('CT_PY_...')` (both prefixes accepted) |
 
 ## How it works
 

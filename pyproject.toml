@@ -1,5 +1,5 @@
 [project]
-name = "nl-agent"
+name = "context-agent"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-nl-agent = "nl_agent:main"
+ct-agent = "context_agent:main"
 
 [build-system]
 requires = ["uv_build>=0.9.22,<0.10.0"]
@@ -24,6 +24,6 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 include = [
-    "src/nl_agent/bin/deno",
-    "src/nl_agent/bin/deno.exe",
+    "src/context_agent/bin/deno",
+    "src/context_agent/bin/deno.exe",
 ]

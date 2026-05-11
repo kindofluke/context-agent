@@ -7,7 +7,7 @@ Pydantic-AI docs are available locally at `pydantic-documentation/pydantic-ai/`.
 ## Source layout
 
 ```
-src/nl_agent/
+src/context_agent/
   __init__.py     # entry point → calls cli()
   cli.py          # Click CLI: `serve` and `run` commands
   agent.py        # pydantic-ai Agent, AgentDeps, execute_js tool
@@ -21,10 +21,10 @@ examples/
 
 ```bash
 # Interactive server (Gradio UI at http://localhost:9101)
-nl-agent serve --exec-dir ./my-agent [--allowed-domains api.example.com,other.com] [--port 9101]
+ct-agent serve --exec-dir ./my-agent [--allowed-domains api.example.com,other.com] [--port 9101]
 
 # Single-turn run
-nl-agent run --exec-dir ./my-agent --prompt "Show me the directory tree"
+ct-agent run --exec-dir ./my-agent --prompt "Show me the directory tree"
 ```
 
 ## Creating an agent directory
@@ -61,11 +61,11 @@ Subprocess is launched with:
 - `--allow-write=<exec_dir>` — write access scoped to the exec directory
 - `--deny-read=.env` — blocks reading `.env` files
 - `--allow-net=<domains>` — only when `--allowed-domains` is passed
-- `--allow-env=NL_PY_*` — only the `NL_PY_` keys present in the Python process env
+- `--allow-env=CT_PY_*,NL_PY_*` — only the `CT_PY_` and `NL_PY_` keys present in the Python process env
 
 The runner script is written to `<exec_dir>/_runner_<uuid>.js` (within the allowed-write path) and deleted after execution. Files starting with `_runner_` are never imported as user tools.
 
-**Environment variables:** prefix any env var with `NL_PY_` and the agent can read it via `Deno.env.get('NL_PY_YOUR_VAR')`.
+**Environment variables:** prefix any env var with `CT_PY_` (or the legacy `NL_PY_`) and the agent can read it via `Deno.env.get('CT_PY_YOUR_VAR')`.
 
 ### Built-in globals
 
@@ -89,7 +89,7 @@ Any `.js` file in `exec_dir` that exports named functions has those exports inje
 async () => {
   await write('tools.js', `
 export async function fetchGDP() {
-  const key = Deno.env.get('NL_PY_FRED_API_KEY');
+  const key = Deno.env.get('CT_PY_FRED_API_KEY');
   const res = await fetch(\`https://api.stlouisfed.org/fred/series/observations?series_id=GDP&api_key=\${key}&file_type=json\`);
   return res.json();
 }
@@ -118,8 +118,8 @@ export OPENAI_MODEL_NAME=gpt-4o   # default if unset
 ## User journey example (stock trader)
 
 1. Create `stock_trader/SystemPrompt.md` describing the trading strategy
-2. `export NL_PY_ALPACA_TOKEN=<your-token>`
-3. `nl-agent serve --exec-dir ./stock_trader --allowed-domains paper-api.alpaca.markets`
+2. `export CT_PY_ALPACA_TOKEN=<your-token>`
+3. `ct-agent serve --exec-dir ./stock_trader --allowed-domains paper-api.alpaca.markets`
 4. Visit `http://localhost:9101`
 5. Ask "Connect to Alpaca and verify the account"
 6. Agent calls `tree()` to orient, writes JS to test the Alpaca API, then saves `tools.js` with trading functions
@@ -129,11 +129,11 @@ export OPENAI_MODEL_NAME=gpt-4o   # default if unset
 
 ### `examples/economic-advisor`
 
-Uses the FRED API. Requires `NL_PY_FRED_API_KEY`. Ships with `fred-client.js` (a pre-written FRED client that becomes a global) and `fred-openApi.yaml` for the agent to reference.
+Uses the FRED API. Requires `CT_PY_FRED_API_KEY` (or legacy `NL_PY_FRED_API_KEY`). Ships with `fred-client.js` (a pre-written FRED client that becomes a global) and `fred-openApi.yaml` for the agent to reference.
 
 ```bash
-export NL_PY_FRED_API_KEY=<your-key>
-nl-agent serve --exec-dir examples/economic-advisor --allowed-domains api.stlouisfed.org
+export CT_PY_FRED_API_KEY=<your-key>
+ct-agent serve --exec-dir examples/economic-advisor --allowed-domains api.stlouisfed.org
 ```
 
 ## Development
@@ -141,6 +141,6 @@ nl-agent serve --exec-dir examples/economic-advisor --allowed-domains api.stloui
 ```bash
 uv add <package>    # add a dependency
 uv build            # verify the package builds
-uv run nl-agent … # run from the local venv
+uv run ct-agent … # run from the local venv
 ```
 

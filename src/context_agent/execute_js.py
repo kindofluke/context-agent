@@ -161,7 +161,7 @@ async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str]) -> str
     runner_name = f"_runner_{uuid.uuid4().hex}.js"
     runner_path = os.path.join(exec_dir, runner_name)
 
-    nl_py_keys = [k for k in os.environ if k.startswith("NL_PY_")]
+    nl_py_keys = [k for k in os.environ if k.startswith("NL_PY_") or k.startswith("CT_PY_")]
 
     runner_script = (
         TOOLS_JS.replace("__EXEC_DIR__", exec_dir)
