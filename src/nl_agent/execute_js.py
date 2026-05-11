@@ -1,6 +1,22 @@
 import asyncio
 import os
+import shutil
+import sys
 import uuid
+
+
+def _get_deno_binary() -> str:
+    suffix = ".exe" if sys.platform == "win32" else ""
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", f"deno{suffix}")
+    if os.path.isfile(bundled):
+        return bundled
+    fallback = shutil.which("deno")
+    if fallback:
+        return fallback
+    raise FileNotFoundError(
+        "Deno binary not found. Run `make deno-download` before building, "
+        "or install Deno manually: https://deno.land/#installation"
+    )
 
 TOOLS_JS = r"""
 const EXEC_DIR = "__EXEC_DIR__";
@@ -163,7 +179,7 @@ async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str]) -> str
         with open(runner_path, "w") as f:
             f.write(runner_script)
 
-        cmd = ["deno", "run"]
+        cmd = [_get_deno_binary(), "run"]
         cmd += [f"--allow-read={exec_dir}"]
         cmd += [f"--allow-write={exec_dir}"]
         cmd += ["--deny-read=.env"]

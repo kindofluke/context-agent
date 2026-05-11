@@ -12,3 +12,7 @@ pydantic-documentation
 src/nl_agent/agent.py
 .env
 .DS_Store
+
+# Deno binary (downloaded at build time, bundled in wheel)
+src/nl_agent/bin/deno
+src/nl_agent/bin/deno.exe
