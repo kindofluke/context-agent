@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir uv
 
 WORKDIR /build
-COPY . .
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
 
 ENV DENO_VERSION=2.6.6
 RUN mkdir -p src/context_agent/bin \
@@ -30,7 +31,6 @@ COPY --from=builder /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 
 COPY workflow-testing/exec-dir/ /app/exec-dir/
-
 RUN chown -R appuser:appuser /app
 
 USER appuser
