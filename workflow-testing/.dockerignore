@@ -1,0 +1,10 @@
+.venv/
+dist/
+.git/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+pydantic-documentation/
+workflow-testing/
+.env
