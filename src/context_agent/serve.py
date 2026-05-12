@@ -4,11 +4,14 @@ import json
 import logging
 import logging.config
 import uuid as uuid_module
+from pathlib import Path
 from typing import AsyncGenerator
 
 import gradio as gr
 from ag_ui.core import AssistantMessage, EventType, RunAgentInput, UserMessage
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 from starlette.requests import Request
 from starlette.responses import Response
@@ -66,8 +69,17 @@ def _gradio_history_to_agui(history: list[dict], current_message: str) -> list:
     return msgs
 
 
+_ALLOWED_EXTENSIONS = {".js", ".yaml", ".yml", ".md"}
+
+
+class UpdateFileRequest(BaseModel):
+    path: str
+    content: str
+
+
 def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastAPI:
     domains = allowed_domains or []
+    exec_path = Path(exec_dir).resolve()
 
     app = FastAPI(title="context-agent")
 
@@ -75,6 +87,26 @@ def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastA
     async def run_agent_endpoint(request: Request) -> Response:
         deps = AgentDeps(exec_dir=exec_dir, allowed_domains=domains)
         return await AGUIAdapter.dispatch_request(request, agent=agent, deps=deps)
+
+    @app.post("/update")
+    async def update_file(body: UpdateFileRequest) -> JSONResponse:
+        # Resolve target path and ensure it stays within exec_dir
+        target = (exec_path / body.path.lstrip("/")).resolve()
+        try:
+            target.relative_to(exec_path)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Path must be within the exec directory")
+
+        if target.suffix.lower() not in _ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {', '.join(sorted(_ALLOWED_EXTENSIONS))} files are allowed",
+            )
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body.content, encoding="utf-8")
+        logger.info("Updated file: %s", target)
+        return JSONResponse({"updated": str(target.relative_to(exec_path))})
 
     async def chat_fn(
         message: str, history: list[dict]

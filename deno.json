@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "@deno/sandbox": "jsr:@deno/sandbox@^0.13.2"
+  }
+}

@@ -5,10 +5,25 @@ import sys
 import uuid
 
 
+def _is_native_binary(path: str) -> bool:
+    """Return True if the binary at path is executable on the current platform."""
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+        if sys.platform == "darwin":
+            return magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+        elif sys.platform == "win32":
+            return magic[:2] == b"MZ"
+        else:
+            return magic == b"\x7fELF"
+    except OSError:
+        return False
+
+
 def _get_deno_binary() -> str:
     suffix = ".exe" if sys.platform == "win32" else ""
     bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", f"deno{suffix}")
-    if os.path.isfile(bundled):
+    if os.path.isfile(bundled) and _is_native_binary(bundled):
         return bundled
     fallback = shutil.which("deno")
     if fallback:

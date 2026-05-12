@@ -64,3 +64,7 @@ def run(exec_dir: str, prompt: str, allowed_domains: str) -> None:
         return result.output
 
     print(asyncio.run(_run()))
+
+
+if __name__ == "__main__":
+    cli()
