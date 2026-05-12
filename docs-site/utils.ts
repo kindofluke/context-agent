@@ -7,3 +7,12 @@ export interface State {
 }
 
 export const define = createDefine<State>();
+
+export function getSessionId(req: Request): string | undefined {
+  const header = req.headers.get("cookie") ?? "";
+  for (const part of header.split(";")) {
+    const [k, v] = part.trim().split("=", 2);
+    if (k === "session_id") return v;
+  }
+  return undefined;
+}

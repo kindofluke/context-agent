@@ -1,6 +1,6 @@
 import { Sandbox } from "@deno/sandbox";
-import { define } from "../../utils.ts";
-import { activeSandbox, clearSandbox, setSandbox } from "../../sandbox-state.ts";
+import { define, getSessionId } from "../../utils.ts";
+import { clearSession, getSession, isAtCapacity, setSession } from "../../sandbox-state.ts";
 
 // Requires DENO_DEPLOY_TOKEN env var (Deno Sandbox auth)
 
@@ -17,8 +17,16 @@ function sseEvent(type: string, message?: string): Uint8Array {
 }
 
 export const handler = define.handlers({
-  async POST(_ctx) {
-    if (activeSandbox) {
+  async POST(ctx) {
+    const sessionId = getSessionId(ctx.req);
+    if (!sessionId) {
+      return new Response(JSON.stringify({ error: "No session." }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (getSession(sessionId)) {
       const stream = new ReadableStream({
         start(ctrl) {
           ctrl.enqueue(sseEvent("STATUS", "Sandbox already running"));
@@ -28,6 +36,28 @@ export const handler = define.handlers({
       });
       return new Response(stream, { headers: SSE_HEADERS });
     }
+
+    if (isAtCapacity()) {
+      const stream = new ReadableStream({
+        start(ctrl) {
+          ctrl.enqueue(sseEvent("WAITING"));
+          ctrl.close();
+        },
+      });
+      return new Response(stream, { headers: SSE_HEADERS });
+    }
+
+    const ALL_ECON_FILES = [
+      "SystemPrompt.md",
+      "fred-client.js",
+      "fred-openApi.yaml",
+      "GDPUnemployment/gdp-unemployment.md",
+      "ConusumerPricesCostofLiving/inflation-cola.md",
+    ];
+
+    let body: { files?: string[] } = {};
+    try { body = await ctx.req.json(); } catch { /* no body or not JSON */ }
+    const filesToUpload = body.files ?? ALL_ECON_FILES;
 
     const stream = new ReadableStream({
       async start(ctrl) {
@@ -56,17 +86,10 @@ export const handler = define.handlers({
 
           send("STATUS", "Uploading economic-advisor files...");
           const econDir = `${projectRoot}examples/economic-advisor`;
+
           await sandbox.sh`sudo mkdir -p /app/economic-advisor/GDPUnemployment /app/economic-advisor/ConusumerPricesCostofLiving && sudo chmod -R 777 /app`;
 
-          for (
-            const f of [
-              "SystemPrompt.md",
-              "fred-client.js",
-              "fred-openApi.yaml",
-              "GDPUnemployment/gdp-unemployment.md",
-              "ConusumerPricesCostofLiving/inflation-cola.md",
-            ]
-          ) {
+          for (const f of filesToUpload) {
             await sandbox.fs.upload(`${econDir}/${f}`, `/app/economic-advisor/${f}`);
           }
 
@@ -107,12 +130,12 @@ export const handler = define.handlers({
 
           send("STATUS", "Exposing HTTP endpoint...");
           const url = await sandbox.exposeHttp({ port: 9101 });
-          setSandbox(url.toString(), sandbox);
+          setSession(sessionId, url.toString(), sandbox);
 
           send("READY");
         } catch (err) {
           send("ERROR", err instanceof Error ? err.message : String(err));
-          clearSandbox();
+          clearSession(sessionId);
         } finally {
           ctrl.close();
         }
@@ -122,14 +145,17 @@ export const handler = define.handlers({
     return new Response(stream, { headers: SSE_HEADERS });
   },
 
-  async DELETE(_ctx) {
-    const { activeSandboxInstance } = await import("../../sandbox-state.ts");
-    if (activeSandboxInstance) {
-      try {
-        await activeSandboxInstance.kill();
-      } catch { /* ignore */ }
+  async DELETE(ctx) {
+    const sessionId = getSessionId(ctx.req);
+    if (sessionId) {
+      const session = getSession(sessionId);
+      if (session) {
+        try {
+          await session.instance.kill();
+        } catch { /* ignore */ }
+        clearSession(sessionId);
+      }
     }
-    clearSandbox();
     return new Response(null, { status: 204 });
   },
 });

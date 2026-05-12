@@ -66,5 +66,30 @@ def run(exec_dir: str, prompt: str, allowed_domains: str) -> None:
     print(asyncio.run(_run()))
 
 
+@cli.command()
+@click.option("--exec-dir", required=True, help="Path to agent execution directory")
+@click.option(
+    "--allowed-domains",
+    default="",
+    help="Comma-separated list of domains for Deno network access",
+)
+def acp(exec_dir: str, allowed_domains: str) -> None:
+    """Start the ACP stdio server for IDE integration (e.g. NeoVim CodeCompanion)."""
+    import asyncio
+
+    from acp import run_agent as acp_run_agent
+
+    from context_agent.acp_server import CtACPAgent
+
+    exec_dir = os.path.realpath(exec_dir)
+    if not os.path.isdir(exec_dir):
+        raise click.BadParameter(
+            f"Directory does not exist: {exec_dir}", param_hint="--exec-dir"
+        )
+
+    domains = [d.strip() for d in allowed_domains.split(",") if d.strip()]
+    asyncio.run(acp_run_agent(CtACPAgent(exec_dir, domains)))
+
+
 if __name__ == "__main__":
     cli()

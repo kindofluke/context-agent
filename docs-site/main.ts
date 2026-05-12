@@ -1,6 +1,6 @@
 import { App, staticFiles } from "fresh";
 import type { State } from "./utils.ts";
-import { activeSandboxInstance, clearSandbox } from "./sandbox-state.ts";
+import { allSessions } from "./sandbox-state.ts";
 
 export const app = new App<State>();
 
@@ -8,11 +8,9 @@ app.use(staticFiles());
 app.fsRoutes();
 
 async function shutdown() {
-  const instance = activeSandboxInstance;
-  if (instance) {
-    clearSandbox();
+  for (const session of allSessions()) {
     try {
-      await instance.kill();
+      await session.instance.kill();
     } catch { /* ignore */ }
   }
   Deno.exit(0);

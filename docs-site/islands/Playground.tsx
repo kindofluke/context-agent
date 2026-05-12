@@ -3,7 +3,7 @@ import { useSignal } from "@preact/signals";
 
 // ── Types ────────────────────────────────────────────
 
-type SandboxState = "idle" | "booting" | "ready" | "error";
+type SandboxState = "idle" | "booting" | "ready" | "error" | "expired" | "waiting";
 
 type UserBlock = { kind: "user"; id: string; content: string };
 type TextBlock = { kind: "text"; id: string; content: string; done: boolean };
@@ -51,22 +51,36 @@ function fileIcon(name: string): { icon: string; cls: string } {
   return { icon: "·", cls: "" };
 }
 
+function getAddLabel(path: string): string {
+  if (path === "SystemPrompt.md") return "Add a System Prompt";
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  if (ext === "yaml" || ext === "yml") return "Add a web service";
+  if (ext === "js") return "Add Tools with JS";
+  return "Add more Context";
+}
+
+const RETRY_SECONDS = 15;
+
 // ── Component ────────────────────────────────────────
 
 interface Props {
   initialFiles: Record<string, string>;
+  addableFiles?: Record<string, string>;
 }
 
-export default function Playground({ initialFiles }: Props) {
+export default function Playground({ initialFiles, addableFiles }: Props) {
   const sandboxState = useSignal<SandboxState>("idle");
   const bootLog = useSignal<string[]>([]);
+  const retryCountdown = useSignal<number>(0);
   const fileContents = useSignal<Record<string, string>>({ ...initialFiles });
+  const addable = useSignal<Record<string, string>>(addableFiles ?? {});
   const selectedFile = useSignal<string | null>(null);
   const editedContent = useSignal<string>("");
   const isDirty = useSignal(false);
   const isSaving = useSignal(false);
   const saveStatus = useSignal<"" | "saved" | "error">("");
   const saveMsg = useSignal<string>("");
+  const isAdding = useSignal(false);
   const blocks = useSignal<ChatBlock[]>([]);
   const agMsgs = useSignal<AgMsg[]>([]);
   const inputText = useSignal<string>("");
@@ -74,9 +88,11 @@ export default function Playground({ initialFiles }: Props) {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     bootSandbox();
+    return () => { clearRetryTimer(); };
   }, []);
 
   // Scroll chat to bottom whenever blocks change
@@ -84,14 +100,38 @@ export default function Playground({ initialFiles }: Props) {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   });
 
+  function clearRetryTimer() {
+    if (retryTimerRef.current !== null) {
+      clearInterval(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }
+
+  function startRetryCountdown() {
+    clearRetryTimer();
+    retryCountdown.value = RETRY_SECONDS;
+    retryTimerRef.current = setInterval(() => {
+      retryCountdown.value -= 1;
+      if (retryCountdown.value <= 0) {
+        clearRetryTimer();
+        bootSandbox();
+      }
+    }, 1000);
+  }
+
   // ── Sandbox boot ──────────────────────────────────
 
   async function bootSandbox() {
+    clearRetryTimer();
     sandboxState.value = "booting";
     bootLog.value = [];
 
     try {
-      const resp = await fetch("/api/sandbox", { method: "POST" });
+      const resp = await fetch("/api/sandbox", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ files: Object.keys(initialFiles) }),
+      });
       if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
 
       const reader = resp.body.getReader();
@@ -113,13 +153,13 @@ export default function Playground({ initialFiles }: Props) {
               bootLog.value = [...bootLog.value, ev.message ?? ""];
             } else if (ev.type === "READY") {
               sandboxState.value = "ready";
-              // Auto-select SystemPrompt.md on first load
               if (!selectedFile.value) {
                 const key = "SystemPrompt.md";
-                if (fileContents.value[key] !== undefined) {
-                  selectFile(key);
-                }
+                if (fileContents.value[key] !== undefined) selectFile(key);
               }
+            } else if (ev.type === "WAITING") {
+              sandboxState.value = "waiting";
+              startRetryCountdown();
             } else if (ev.type === "ERROR") {
               bootLog.value = [...bootLog.value, `ERROR: ${ev.message ?? "unknown"}`];
               sandboxState.value = "error";
@@ -172,6 +212,36 @@ export default function Playground({ initialFiles }: Props) {
     }
   }
 
+  // ── Add file from addable set ─────────────────────
+
+  async function addFile(path: string) {
+    if (isAdding.value || !path) return;
+    const content = addable.value[path];
+    if (content === undefined) return;
+
+    isAdding.value = true;
+    try {
+      const resp = await fetch("/api/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path, content }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw new Error(err.detail ?? err.error ?? "Add failed");
+      }
+      fileContents.value = { ...fileContents.value, [path]: content };
+      const next = { ...addable.value };
+      delete next[path];
+      addable.value = next;
+      selectFile(path);
+    } catch (err) {
+      console.error("Failed to add file:", err);
+    } finally {
+      isAdding.value = false;
+    }
+  }
+
   // ── Chat ──────────────────────────────────────────
 
   async function sendMessage() {
@@ -203,17 +273,22 @@ export default function Playground({ initialFiles }: Props) {
           forwarded_props: null,
         }),
       });
+      if (resp.status === 503) {
+        sandboxState.value = "expired";
+        isStreaming.value = false;
+        return;
+      }
       if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
 
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
 
-      // Track streaming block indices
       const textIdx: Record<string, number> = {};
       const toolIdx: Record<string, number> = {};
       const toolBuf: Record<string, string> = {};
       let cur = [...blocks.value];
+      let streamFinished = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -273,7 +348,7 @@ export default function Playground({ initialFiles }: Props) {
             }
 
           } else if (t === "RUN_FINISHED") {
-            // Collect assistant text for history
+            streamFinished = true;
             const assistantText = Object.keys(textIdx)
               .map((id) => {
                 const idx = textIdx[id];
@@ -290,6 +365,7 @@ export default function Playground({ initialFiles }: Props) {
             break;
 
           } else if (t === "RUN_ERROR") {
+            streamFinished = true;
             const errId = crypto.randomUUID();
             const errBlock: TextBlock = { kind: "text", id: errId, content: `Error: ${ev.message ?? "unknown"}`, done: true };
             cur = [...cur, errBlock];
@@ -299,12 +375,12 @@ export default function Playground({ initialFiles }: Props) {
           }
         }
       }
-    } catch (err) {
-      const errId = crypto.randomUUID();
-      blocks.value = [
-        ...blocks.value,
-        { kind: "text", id: errId, content: `Connection error: ${(err as Error).message}`, done: true },
-      ];
+      if (!streamFinished) {
+        sandboxState.value = "expired";
+        isStreaming.value = false;
+      }
+    } catch {
+      sandboxState.value = "expired";
       isStreaming.value = false;
     }
   }
@@ -319,8 +395,9 @@ export default function Playground({ initialFiles }: Props) {
   // ── Render ────────────────────────────────────────
 
   const state = sandboxState.value;
-  const sortedPaths = Object.keys(initialFiles).sort();
+  const sortedPaths = Object.keys(fileContents.value).sort();
   const { roots, dirs } = buildTree(sortedPaths);
+  const addableKeys = Object.keys(addable.value);
 
   return (
     <div class="app-root">
@@ -329,13 +406,16 @@ export default function Playground({ initialFiles }: Props) {
         <span class="app-header-title">context-agent</span>
         <span class="app-header-sep">/</span>
         <span class="app-header-subtitle">economic advisor playground</span>
-        {state === "ready" && <span class="status-dot status-dot--ready" title="Sandbox running" />}
-        {state === "booting" && <span class="status-dot status-dot--booting" title="Booting…" />}
-        {state === "error" && <span class="status-dot status-dot--error" title="Error" />}
+        <div class="app-header-right">
+          {state === "ready" && <span class="status-dot status-dot--ready" title="Sandbox running" />}
+          {(state === "booting" || state === "waiting") && <span class="status-dot status-dot--booting" title={state === "waiting" ? "Waiting for slot…" : "Booting…"} />}
+          {(state === "error" || state === "expired") && <span class="status-dot status-dot--error" title={state === "expired" ? "Session expired" : "Error"} />}
+          <a href="/getting-started" class="app-header-link">Getting Started →</a>
+        </div>
       </header>
 
-      {/* Boot screen */}
-      {state !== "ready" && (
+      {/* Boot log terminal */}
+      {(state === "booting" || state === "error" || state === "idle") && (
         <div class="boot-screen">
           <div class="boot-terminal">
             <div class="boot-terminal-bar">
@@ -368,6 +448,55 @@ export default function Playground({ initialFiles }: Props) {
                   Connecting to Deno Sandbox…
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Waiting for a free slot */}
+      {state === "waiting" && (
+        <div class="boot-screen">
+          <div class="boot-terminal">
+            <div class="boot-terminal-bar">
+              <div class="boot-dots">
+                <div class="boot-dot boot-dot-r" />
+                <div class="boot-dot boot-dot-y" />
+                <div class="boot-dot boot-dot-g" />
+              </div>
+              <span class="boot-terminal-title">sandbox setup</span>
+            </div>
+            <div class="boot-log">
+              <div class="boot-line boot-line--active">
+                <span class="boot-spinner" />
+                We have a lot of activity right now, we are waiting for a free slot.
+              </div>
+              <div class="boot-line boot-line--done" style="color:var(--text-dim);margin-top:0.5rem">
+                Retrying in {retryCountdown.value}s…
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Session expired */}
+      {state === "expired" && (
+        <div class="boot-screen">
+          <div class="boot-terminal">
+            <div class="boot-terminal-bar">
+              <div class="boot-dots">
+                <div class="boot-dot boot-dot-r" />
+                <div class="boot-dot boot-dot-y" />
+                <div class="boot-dot boot-dot-g" />
+              </div>
+              <span class="boot-terminal-title">session expired</span>
+            </div>
+            <div class="boot-log">
+              <div class="boot-line boot-line--error">Sandbox timed out after 30 minutes of inactivity.</div>
+              <div class="boot-line boot-line--done" style="margin-top:1rem">
+                <button class="btn-save" style="font-size:0.85rem" onClick={() => globalThis.location.reload()}>
+                  Refresh to start a new session
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -421,6 +550,27 @@ export default function Playground({ initialFiles }: Props) {
                 </div>
               ))}
             </div>
+
+            {/* Add file dropdown */}
+            {addableKeys.length > 0 && (
+              <div class="add-file-wrap">
+                <select
+                  class="add-file-select"
+                  disabled={isAdding.value}
+                  value=""
+                  onChange={(e) => {
+                    const path = (e.target as HTMLSelectElement).value;
+                    if (path) addFile(path);
+                    (e.target as HTMLSelectElement).value = "";
+                  }}
+                >
+                  <option value="">{isAdding.value ? "Adding…" : "+ Add file…"}</option>
+                  {addableKeys.map((path) => (
+                    <option key={path} value={path}>{getAddLabel(path)}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* ── Middle: editor ── */}
