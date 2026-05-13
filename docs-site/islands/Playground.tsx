@@ -89,11 +89,30 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     bootSandbox();
-    return () => { clearRetryTimer(); };
+    return () => {
+      clearRetryTimer();
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
   }, []);
+
+  // Poll for file changes when sandbox is ready
+  useEffect(() => {
+    if (sandboxState.value === "ready") {
+      // Poll every 2 seconds
+      pollTimerRef.current = setInterval(() => {
+        refreshFiles();
+      }, 2000);
+    } else {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    }
+  }, [sandboxState.value]);
 
   // Scroll chat to bottom whenever blocks change
   useEffect(() => {
@@ -170,6 +189,40 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
     } catch (err) {
       bootLog.value = [...bootLog.value, `Connection error: ${(err as Error).message}`];
       sandboxState.value = "error";
+    }
+  }
+
+  // ── Refresh file list from sandbox ────────────────
+
+  async function refreshFiles() {
+    try {
+      const resp = await fetch("/api/files");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.files) {
+        // Merge new files with existing ones
+        const newFiles = { ...fileContents.value };
+        let hasChanges = false;
+
+        for (const [path, content] of Object.entries(data.files)) {
+          // Only update if file is new or different
+          if (newFiles[path] !== content) {
+            newFiles[path] = content as string;
+            hasChanges = true;
+          }
+        }
+
+        if (hasChanges) {
+          fileContents.value = newFiles;
+          // If a new file was created and no file is selected, select it
+          if (!selectedFile.value && Object.keys(data.files).length > 0) {
+            const firstFile = Object.keys(data.files)[0];
+            selectFile(firstFile);
+          }
+        }
+      }
+    } catch {
+      // Silently fail - polling will retry
     }
   }
 
@@ -405,7 +458,7 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
       <header class="app-header">
         <span class="app-header-title">context-agent</span>
         <span class="app-header-sep">/</span>
-        <span class="app-header-subtitle">economic advisor playground</span>
+        <span class="app-header-subtitle">playground</span>
         <div class="app-header-right">
           {state === "ready" && <span class="status-dot status-dot--ready" title="Sandbox running" />}
           {(state === "booting" || state === "waiting") && <span class="status-dot status-dot--booting" title={state === "waiting" ? "Waiting for slot…" : "Booting…"} />}

@@ -1,3 +1,8 @@
+/* Tailwind CSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* ── Reset ─────────────────────────────────────────── */
 *,
 *::before,
@@ -6,7 +11,7 @@
 button { color: inherit; }
 button, [role="button"] { cursor: pointer; }
 
-/* ── Tokens (Tokyo Night palette) ─────────────────── */
+/* ── Tokens (Tokyo Night palette for Playground) ─────────────────── */
 :root {
   --bg:          #1a1b26;
   --bg-dark:     #13141e;
@@ -28,19 +33,19 @@ button, [role="button"] { cursor: pointer; }
 html, body {
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
-  color: var(--text);
   font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
 }
 
-/* ── App shell ─────────────────────────────────────── */
+/* ── App shell (Playground) ─────────────────────────────────────── */
 .app-root {
   display: flex;
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .app-header {
@@ -89,7 +94,7 @@ html, body {
   50%       { opacity: 0.25; }
 }
 
-/* ── Boot screen ───────────────────────────────────── */
+/* ── Boot screen (Playground) ───────────────────────────────────── */
 .boot-screen {
   flex: 1;
   display: flex;
@@ -165,7 +170,7 @@ html, body {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Three-pane layout ─────────────────────────────── */
+/* ── Three-pane layout (Playground) ─────────────────────────────── */
 .playground-grid {
   flex: 1;
   display: grid;
@@ -174,7 +179,7 @@ html, body {
   min-height: 0;
 }
 
-/* ── Shared pane chrome ────────────────────────────── */
+/* ── Shared pane chrome (Playground) ────────────────────────────── */
 .pane-label {
   padding: 7px 12px;
   font-size: 10px;
@@ -187,7 +192,7 @@ html, body {
   background: var(--bg-panel);
 }
 
-/* ── File tree ─────────────────────────────────────── */
+/* ── File tree (Playground) ─────────────────────────────────────── */
 .pane-tree {
   background: var(--bg-dark);
   border-right: 1px solid var(--border);
@@ -239,7 +244,7 @@ html, body {
 .file-icon--yaml { color: var(--green); }
 .file-icon--yml  { color: var(--green); }
 
-/* ── File editor ───────────────────────────────────── */
+/* ── File editor (Playground) ───────────────────────────────────── */
 .pane-editor {
   background: var(--bg);
   border-right: 1px solid var(--border);
@@ -332,7 +337,7 @@ html, body {
   font-size: 12px;
 }
 
-/* ── Chat pane ─────────────────────────────────────── */
+/* ── Chat pane (Playground) ─────────────────────────────────────── */
 .pane-chat {
   background: var(--bg-dark);
   display: flex;
@@ -436,7 +441,7 @@ details[open] .chat-tool-chevron { transform: rotate(90deg); }
   padding: 4px 0;
 }
 
-/* ── Chat input ────────────────────────────────────── */
+/* ── Chat input (Playground) ────────────────────────────────────── */
 .chat-input-wrap {
   border-top: 1px solid var(--border);
   padding: 10px 16px 12px;
@@ -503,7 +508,7 @@ details[open] .chat-tool-chevron { transform: rotate(90deg); }
 .add-file-select:disabled { opacity: 0.5; cursor: default; }
 .add-file-select option { background: var(--bg-panel); }
 
-/* ── Getting Started page ──────────────────────────── */
+/* ── Getting Started page (Playground) ──────────────────────────── */
 .gs-root {
   min-height: 100%;
   background: var(--bg);
@@ -652,273 +657,4 @@ details[open] .chat-tool-chevron { transform: rotate(90deg); }
 @media (max-width: 600px) {
   .step-card { grid-template-columns: 1fr; }
   .step-media { order: -1; }
-}
-
-/* ── Documentation layout with navigation ──────────── */
-.doc-layout {
-  display: flex;
-  height: 100vh;
-  overflow: hidden;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-ui);
-}
-
-.doc-nav {
-  width: 240px;
-  flex-shrink: 0;
-  background: var(--bg-dark);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-
-.doc-nav-header {
-  padding: 24px 20px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.doc-nav-title {
-  font-family: var(--font-code);
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-bright);
-  letter-spacing: 0.03em;
-  margin: 0;
-}
-
-.doc-nav-list {
-  list-style: none;
-  padding: 16px 0;
-  flex: 1;
-}
-
-.doc-nav-list li {
-  margin: 0;
-}
-
-.doc-nav-link {
-  display: block;
-  padding: 10px 20px;
-  color: var(--text-dim);
-  text-decoration: none;
-  font-size: 14px;
-  transition: color 0.15s, background 0.15s;
-}
-
-.doc-nav-link:hover {
-  color: var(--text-bright);
-  background: var(--bg-panel);
-}
-
-.doc-nav-link--active {
-  color: var(--text-bright);
-  background: var(--bg-panel);
-  border-left: 3px solid var(--blue);
-  padding-left: 17px;
-}
-
-.doc-nav-link--external {
-  font-size: 13px;
-}
-
-.doc-nav-footer {
-  padding: 16px 0;
-  border-top: 1px solid var(--border);
-}
-
-.doc-layout-main {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* ── Documentation pages ───────────────────────────── */
-.doc-root {
-  min-height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-ui);
-}
-
-.doc-header {
-  background: var(--bg-dark);
-  border-bottom: 1px solid var(--border);
-  padding: 40px 32px 32px;
-}
-.doc-header-inner {
-  max-width: 900px;
-  margin: 0 auto;
-}
-.doc-title {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--text-bright);
-  margin-bottom: 14px;
-  letter-spacing: -0.5px;
-}
-.doc-subtitle {
-  font-size: 15px;
-  line-height: 1.7;
-  color: var(--text-dim);
-  max-width: 680px;
-}
-
-.doc-content {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 40px 32px 64px;
-}
-
-.doc-content h2 {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--text-bright);
-  margin: 32px 0 16px;
-  letter-spacing: -0.3px;
-}
-.doc-content h2:first-child { margin-top: 0; }
-
-.doc-content h3 {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-bright);
-  margin: 24px 0 12px;
-}
-
-.doc-content p {
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--text);
-  margin-bottom: 16px;
-}
-
-.doc-content ul,
-.doc-content ol {
-  margin: 16px 0;
-  padding-left: 24px;
-  color: var(--text);
-}
-
-.doc-content li {
-  font-size: 14px;
-  line-height: 1.7;
-  margin-bottom: 8px;
-}
-
-.doc-content code {
-  font-family: var(--font-code);
-  font-size: 13px;
-  background: var(--bg-panel);
-  padding: 2px 6px;
-  border-radius: 3px;
-  color: var(--cyan);
-}
-
-.doc-content pre {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 16px;
-  margin: 16px 0;
-  overflow-x: auto;
-}
-
-.doc-content pre code {
-  background: none;
-  padding: 0;
-  color: var(--text-bright);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.doc-content a {
-  color: var(--blue);
-  text-decoration: none;
-}
-.doc-content a:hover { text-decoration: underline; }
-
-.doc-content strong {
-  color: var(--text-bright);
-  font-weight: 600;
-}
-
-/* ── Alert boxes ───────────────────────────────────── */
-.alert {
-  border-radius: 6px;
-  padding: 14px 16px;
-  margin: 16px 0;
-  font-size: 14px;
-  line-height: 1.6;
-  border-left: 3px solid;
-}
-
-.alert--info {
-  background: rgba(122, 162, 247, 0.1);
-  border-left-color: var(--blue);
-  color: var(--text);
-}
-
-.alert--success {
-  background: rgba(158, 206, 106, 0.1);
-  border-left-color: var(--green);
-  color: var(--text);
-}
-
-.alert--warning {
-  background: rgba(224, 175, 104, 0.1);
-  border-left-color: var(--yellow);
-  color: var(--text);
-}
-
-.alert--error {
-  background: rgba(247, 118, 142, 0.1);
-  border-left-color: var(--red);
-  color: var(--text);
-}
-
-.alert p:last-child {
-  margin-bottom: 0;
-}
-
-/* ── Interactive playground links ──────────────────── */
-.play-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px 16px;
-  margin: 16px 0;
-  color: var(--text);
-  text-decoration: none;
-  font-size: 13px;
-  transition: border-color 0.2s, background 0.2s;
-}
-.play-link:hover {
-  background: var(--bg-hi);
-  border-color: var(--blue);
-}
-.play-link-label {
-  font-weight: 600;
-  color: var(--text-bright);
-}
-
-@media (max-width: 768px) {
-  .doc-layout {
-    flex-direction: column;
-  }
-  .doc-nav {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    max-height: 50vh;
-  }
-  .doc-header { padding: 32px 20px 24px; }
-  .doc-title { font-size: 28px; }
-  .doc-content { padding: 32px 20px 48px; }
-  .doc-content h2 { font-size: 20px; margin-top: 24px; }
-  .doc-content h3 { font-size: 16px; }
 }

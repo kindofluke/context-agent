@@ -19,36 +19,55 @@ interface DocLayoutProps {
 
 export default function DocLayout({ children, currentPath }: DocLayoutProps) {
   return (
-    <div class="doc-layout">
-      <nav class="doc-nav">
-        <div class="doc-nav-header">
-          <h2 class="doc-nav-title">Context Agents</h2>
+    <div class="flex h-screen overflow-hidden bg-white">
+      {/* Sidebar Navigation */}
+      <nav class="w-80 flex-shrink-0 bg-slate-50 border-r border-slate-200 flex flex-col overflow-y-auto">
+        {/* Header */}
+        <div class="px-6 py-6 border-b border-slate-200">
+          <h2 class="font-mono text-lg font-bold text-slate-800 tracking-tight">
+            Context Agents
+          </h2>
         </div>
-        <ul class="doc-nav-list">
-          {NAV_ITEMS.map((item) => (
-            <li key={item.href}>
-              <a
-                href={item.href}
-                class={`doc-nav-link${currentPath === item.href ? " doc-nav-link--active" : ""}`}
-              >
-                {item.label}
-              </a>
-            </li>
-          ))}
+
+        {/* Navigation Links */}
+        <ul class="flex-1 py-4">
+          {NAV_ITEMS.map((item) => {
+            const isActive = currentPath === item.href;
+            return (
+              <li key={item.href}>
+                <a
+                  href={item.href}
+                  class={`block px-6 py-3 text-sm transition-colors ${
+                    isActive
+                      ? "bg-blue-50 border-l-4 border-blue-600 pl-[1.375rem] text-slate-900 font-semibold"
+                      : "border-l-4 border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  }`}
+                >
+                  {item.label}
+                </a>
+              </li>
+            );
+          })}
         </ul>
-        <div class="doc-nav-footer">
+
+        {/* Footer */}
+        <div class="py-4 border-t border-slate-200">
           <a
             href="https://github.com/kindofluke/context-agent"
             target="_blank"
             rel="noopener noreferrer"
-            class="doc-nav-link doc-nav-link--external"
+            class="block px-6 py-2 text-sm text-slate-500 hover:text-blue-600 transition-colors"
           >
             GitHub →
           </a>
         </div>
       </nav>
-      <main class="doc-layout-main">
-        {children}
+
+      {/* Main Content Area */}
+      <main class="flex-1 overflow-y-auto overflow-x-hidden bg-white">
+        <div class="w-4/5 mx-auto">
+          {children}
+        </div>
       </main>
     </div>
   );
