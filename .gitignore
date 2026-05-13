@@ -9,7 +9,6 @@ wheels/
 # Virtual environments
 .venv
 pydantic-documentation
-src/context_agent/agent.py
 .env
 .DS_Store
 
