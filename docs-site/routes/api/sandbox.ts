@@ -64,9 +64,14 @@ export const handler = define.handlers({
         const send = (type: string, msg?: string) => ctrl.enqueue(sseEvent(type, msg));
 
         try {
+          // Generate a unique session secret for request signing
+          const sessionSecret = crypto.randomUUID();
+
           // Collect env vars to pass into sandbox
           const envObj = Deno.env.toObject();
-          const env: Record<string, string> = {};
+          const env: Record<string, string> = {
+            SESSION_SECRET: sessionSecret,  // Pass session secret to sandbox
+          };
           for (const key of ["OPENAI_API_KEY", "OPENAI_MODEL_NAME", "OPENAI_BASE_URL"]) {
             if (envObj[key]) env[key] = envObj[key];
           }
@@ -113,6 +118,7 @@ export const handler = define.handlers({
               "api.stlouisfed.org",
               "--port",
               "9101",
+              "--require-signatures",
             ],
           });
 
@@ -130,7 +136,7 @@ export const handler = define.handlers({
 
           send("STATUS", "Exposing HTTP endpoint...");
           const url = await sandbox.exposeHttp({ port: 9101 });
-          setSession(sessionId, url.toString(), sandbox);
+          setSession(sessionId, url.toString(), sandbox, sessionSecret);
 
           send("READY");
         } catch (err) {

@@ -18,7 +18,13 @@ def cli() -> None:
 )
 @click.option("--port", default=9101, show_default=True, help="Port to listen on")
 @click.option("--host", default="0.0.0.0", show_default=True, help="Host to bind to")
-def serve(exec_dir: str, allowed_domains: str, port: int, host: str) -> None:
+@click.option(
+    "--require-signatures",
+    is_flag=True,
+    default=False,
+    help="Enable HMAC signature verification for /agent requests",
+)
+def serve(exec_dir: str, allowed_domains: str, port: int, host: str, require_signatures: bool) -> None:
     """Start the context-agent server with web UI."""
     import uvicorn
 
@@ -31,10 +37,12 @@ def serve(exec_dir: str, allowed_domains: str, port: int, host: str) -> None:
         )
 
     domains = [d.strip() for d in allowed_domains.split(",") if d.strip()]
-    app = create_app(exec_dir=exec_dir, allowed_domains=domains)
+    app = create_app(exec_dir=exec_dir, allowed_domains=domains, require_signatures=require_signatures)
 
     click.echo(f"Starting context-agent at http://{host}:{port}")
     click.echo(f"  exec_dir: {exec_dir}")
+    if require_signatures:
+        click.echo("  signature verification: ENABLED")
     uvicorn.run(app, host=host, port=port)
 
 

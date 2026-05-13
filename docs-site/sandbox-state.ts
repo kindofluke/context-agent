@@ -9,6 +9,7 @@ interface SessionEntry {
   // deno-lint-ignore no-explicit-any
   instance: any;
   createdAt: number;
+  secret: string;
 }
 
 const sessions = new Map<string, SessionEntry>();
@@ -25,8 +26,8 @@ export function getSession(id: string): SessionEntry | null {
   return sessions.get(id) ?? null;
 }
 
-export function setSession(id: string, url: string, instance: unknown): void {
-  sessions.set(id, { url, instance, createdAt: Date.now() });
+export function setSession(id: string, url: string, instance: unknown, secret: string): void {
+  sessions.set(id, { url, instance, createdAt: Date.now(), secret });
 }
 
 export function clearSession(id: string): void {

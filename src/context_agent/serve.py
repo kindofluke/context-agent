@@ -77,11 +77,16 @@ class UpdateFileRequest(BaseModel):
     content: str
 
 
-def create_app(exec_dir: str, allowed_domains: list[str] | None = None) -> FastAPI:
+def create_app(exec_dir: str, allowed_domains: list[str] | None = None, require_signatures: bool = False) -> FastAPI:
     domains = allowed_domains or []
     exec_path = Path(exec_dir).resolve()
 
     app = FastAPI(title="context-agent")
+
+    # Add signature verification middleware if enabled
+    if require_signatures:
+        from context_agent.signature_middleware import verify_request_signature
+        app.middleware("http")(verify_request_signature)
 
     @app.post("/agent")
     async def run_agent_endpoint(request: Request) -> Response:

@@ -1,5 +1,6 @@
 import { define, getSessionId } from "../../utils.ts";
 import { clearSession, getSession } from "../../sandbox-state.ts";
+import { signRequest } from "../../utils/signature.ts";
 
 export const handler = define.handlers({
   async POST(ctx) {
@@ -20,11 +21,20 @@ export const handler = define.handlers({
     }
 
     const body = await ctx.req.text();
+
+    // Sign the request using the session secret
+    const signature = await signRequest(body, session.secret);
+    const timestamp = Date.now().toString();
+
     let upstream: Response;
     try {
       upstream = await fetch(`${session.url}/agent`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-signature": signature,
+          "x-timestamp": timestamp,
+        },
         body,
       });
     } catch {
