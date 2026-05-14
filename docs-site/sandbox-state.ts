@@ -1,15 +1,12 @@
-// Per-user session store for Deno Sandbox VMs.
+// Per-user session store for Cloud Run multi-tenant service.
 // Keyed by session_id cookie value; max MAX_SESSIONS active at once.
+// Sessions are ephemeral and tracked for rate limiting only.
 
-const MAX_SESSIONS = 8;
-const SESSION_TTL_MS = 30 * 60 * 1000; // matches Deno Sandbox "30m" timeout
+const MAX_SESSIONS = 100; // Increased capacity for Cloud Run autoscaling
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minute session timeout
 
 interface SessionEntry {
-  url: string;
-  // deno-lint-ignore no-explicit-any
-  instance: any;
   createdAt: number;
-  secret: string;
 }
 
 const sessions = new Map<string, SessionEntry>();
@@ -26,8 +23,8 @@ export function getSession(id: string): SessionEntry | null {
   return sessions.get(id) ?? null;
 }
 
-export function setSession(id: string, url: string, instance: unknown, secret: string): void {
-  sessions.set(id, { url, instance, createdAt: Date.now(), secret });
+export function createSession(id: string): void {
+  sessions.set(id, { createdAt: Date.now() });
 }
 
 export function clearSession(id: string): void {

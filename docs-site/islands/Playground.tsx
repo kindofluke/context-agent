@@ -90,6 +90,7 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bootStartTimeRef = useRef<number>(0);
 
   useEffect(() => {
     bootSandbox();
@@ -144,6 +145,9 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
     clearRetryTimer();
     sandboxState.value = "booting";
     bootLog.value = [];
+    bootStartTimeRef.current = Date.now();
+
+    const MIN_BOOT_TIME_MS = 5000; // Show boot screen for at least 5 seconds
 
     try {
       const resp = await fetch("/api/sandbox", {
@@ -156,6 +160,7 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
+      let readyReceived = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -171,19 +176,34 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
             if (ev.type === "STATUS") {
               bootLog.value = [...bootLog.value, ev.message ?? ""];
             } else if (ev.type === "READY") {
-              sandboxState.value = "ready";
-              if (!selectedFile.value) {
-                const key = "SystemPrompt.md";
-                if (fileContents.value[key] !== undefined) selectFile(key);
-              }
+              readyReceived = true;
+              bootLog.value = [...bootLog.value, "Sandbox ready, loading playground..."];
             } else if (ev.type === "WAITING") {
               sandboxState.value = "waiting";
               startRetryCountdown();
+              return;
             } else if (ev.type === "ERROR") {
               bootLog.value = [...bootLog.value, `ERROR: ${ev.message ?? "unknown"}`];
               sandboxState.value = "error";
+              return;
             }
           } catch { /* ignore parse errors */ }
+        }
+      }
+
+      // Wait for minimum boot time before transitioning to ready
+      if (readyReceived) {
+        const elapsed = Date.now() - bootStartTimeRef.current;
+        const remaining = MIN_BOOT_TIME_MS - elapsed;
+
+        if (remaining > 0) {
+          await new Promise(resolve => setTimeout(resolve, remaining));
+        }
+
+        sandboxState.value = "ready";
+        if (!selectedFile.value) {
+          const key = "SystemPrompt.md";
+          if (fileContents.value[key] !== undefined) selectFile(key);
         }
       }
     } catch (err) {

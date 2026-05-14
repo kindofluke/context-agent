@@ -1,7 +1,8 @@
 import { define, getSessionId } from "../utils.ts";
 import Playground from "../islands/Playground.tsx";
 
-const ECON_DIR = new URL("../../examples/economic-advisor/", import.meta.url).pathname;
+// Examples are copied into docs-site/examples/ by the Makefile before build
+const ECON_DIR = new URL("../examples/economic-advisor/", import.meta.url).pathname;
 const ALLOWED_EXTS = new Set([".js", ".md", ".yaml", ".yml"]);
 
 async function loadAllEconFiles(): Promise<Record<string, string>> {

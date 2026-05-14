@@ -1,6 +1,33 @@
 import { define, getSessionId } from "../../utils.ts";
 import { getSession } from "../../sandbox-state.ts";
 
+// Backend service URL (set via environment variable)
+const BACKEND_SERVICE_URL = Deno.env.get("BACKEND_SERVICE_URL") || "http://localhost:9101";
+
+/**
+ * Fetch Cloud Run identity token from the metadata service for service-to-service auth.
+ */
+async function getIdentityToken(audience: string): Promise<string | null> {
+  try {
+    const metadataUrl = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
+    const response = await fetch(`${metadataUrl}?audience=${encodeURIComponent(audience)}`, {
+      headers: {
+        "Metadata-Flavor": "Google",
+      },
+    });
+
+    if (!response.ok) {
+      console.error("Failed to fetch identity token:", response.status, await response.text());
+      return null;
+    }
+
+    return await response.text();
+  } catch (err) {
+    console.error("Error fetching identity token:", err);
+    return null;
+  }
+}
+
 export const handler = define.handlers({
   async GET(ctx) {
     const sessionId = getSessionId(ctx.req);
@@ -14,51 +41,51 @@ export const handler = define.handlers({
     const session = getSession(sessionId);
     if (!session) {
       return new Response(
-        JSON.stringify({ files: [] }),
+        JSON.stringify({ files: {} }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
 
-    try {
-      // Use the sandbox to list files in the exec directory
-      const result = await session.instance.sh`ls -A /app/economic-advisor`;
-      const output = result.stdout || "";
-      const files = output.trim().split("\n").filter((f: string) => f && !f.startsWith("_runner_"));
+    // Get identity token for service-to-service authentication
+    const isLocal = BACKEND_SERVICE_URL.includes("localhost") || BACKEND_SERVICE_URL.includes("127.0.0.1");
+    let authHeaders: Record<string, string> = {};
 
-      // Read content of each file
-      const fileContents: Record<string, string> = {};
-      for (const file of files) {
-        try {
-          const contentResult = await session.instance.sh`cat /app/economic-advisor/${file}`;
-          fileContents[file] = contentResult.stdout || "";
-        } catch {
-          // If we can't read it, skip it (might be a directory)
-          try {
-            // Try to list directory contents
-            const dirResult = await session.instance.sh`ls -A /app/economic-advisor/${file}`;
-            const dirFiles = dirResult.stdout.trim().split("\n").filter((f: string) => f);
-            for (const subfile of dirFiles) {
-              try {
-                const subContentResult = await session.instance.sh`cat /app/economic-advisor/${file}/${subfile}`;
-                fileContents[`${file}/${subfile}`] = subContentResult.stdout || "";
-              } catch {
-                // Skip files we can't read
-              }
-            }
-          } catch {
-            // Not a readable directory either
-          }
-        }
+    if (!isLocal) {
+      const identityToken = await getIdentityToken(BACKEND_SERVICE_URL);
+      if (identityToken) {
+        authHeaders["Authorization"] = `Bearer ${identityToken}`;
+      } else {
+        console.warn("Failed to obtain identity token, request may fail on private backend");
+      }
+    }
+
+    try {
+      const upstream = await fetch(`${BACKEND_SERVICE_URL}/files`, {
+        method: "GET",
+        headers: {
+          "x-session-id": sessionId,
+          ...authHeaders,
+        },
+      });
+
+      if (!upstream.ok) {
+        console.error("Backend /files returned error:", upstream.status);
+        return new Response(
+          JSON.stringify({ files: {} }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
       }
 
-      return new Response(JSON.stringify({ files: fileContents }), {
+      const result = await upstream.json();
+      return new Response(JSON.stringify(result), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     } catch (err) {
+      console.error("Failed to fetch files from backend:", err);
       return new Response(
-        JSON.stringify({ error: "Failed to list files", details: (err as Error).message }),
-        { status: 500, headers: { "content-type": "application/json" } },
+        JSON.stringify({ files: {} }),
+        { status: 200, headers: { "content-type": "application/json" } },
       );
     }
   },

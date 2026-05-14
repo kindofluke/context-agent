@@ -1,0 +1,37 @@
+# Git files
+.git
+.gitignore
+
+# Build output (will be regenerated in container)
+_fresh/
+dist/
+
+# Dependencies (will be fetched in container)
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment and secrets
+.env
+.env.local
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+
+# Documentation (but allow examples/**/*.md for playground)
+README.md
+# Note: Not excluding *.md here because examples/ needs .md files at runtime

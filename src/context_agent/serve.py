@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import logging.config
+import shutil
 import uuid as uuid_module
 from pathlib import Path
 from typing import AsyncGenerator
@@ -77,28 +78,112 @@ class UpdateFileRequest(BaseModel):
     content: str
 
 
-def create_app(exec_dir: str, allowed_domains: list[str] | None = None, require_signatures: bool = False) -> FastAPI:
+def _get_session_dir(session_id: str, base_dir: Path) -> Path:
+    """Get the session directory path for a given session ID."""
+    return base_dir / session_id
+
+
+def _initialize_session_dir(session_dir: Path, template_dir: Path | None) -> None:
+    """Initialize a session directory by copying template files if provided."""
+    if session_dir.exists():
+        logger.debug("Session directory already exists: %s", session_dir)
+        return
+
+    session_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Created session directory: %s", session_dir)
+
+    if template_dir and template_dir.exists():
+        logger.info("Copying template files from %s to %s", template_dir, session_dir)
+        for item in template_dir.iterdir():
+            if item.is_file():
+                shutil.copy2(item, session_dir / item.name)
+            elif item.is_dir():
+                shutil.copytree(item, session_dir / item.name, dirs_exist_ok=True)
+        logger.info("Template files copied successfully")
+    else:
+        logger.info("No template directory provided or template directory does not exist")
+
+
+def _extract_session_id(request: Request) -> str | None:
+    """Extract session ID from request headers."""
+    return request.headers.get("x-session-id")
+
+
+def create_app(
+    exec_dir: str | None = None,
+    allowed_domains: list[str] | None = None,
+    require_signatures: bool = False,
+    session_mode: bool = False,
+    template_dir: str | None = None,
+) -> FastAPI:
+    """Create the FastAPI application.
+
+    Args:
+        exec_dir: Agent execution directory (required if not in session_mode)
+        allowed_domains: List of domains for Deno network access
+        require_signatures: Enable HMAC signature verification (deprecated, use auth at proxy layer)
+        session_mode: Enable multi-tenant session mode with per-session directories
+        template_dir: Template directory to copy files from when initializing new sessions
+    """
     domains = allowed_domains or []
-    exec_path = Path(exec_dir).resolve()
+
+    # In session mode, exec_dir becomes the base sessions directory
+    if session_mode:
+        sessions_base = Path(exec_dir or "/tmp/sessions").resolve()
+        sessions_base.mkdir(parents=True, exist_ok=True)
+        template_path = Path(template_dir).resolve() if template_dir else None
+        logger.info("Session mode enabled: base_dir=%s, template_dir=%s", sessions_base, template_path)
+    else:
+        if not exec_dir:
+            raise ValueError("exec_dir is required when not in session_mode")
+        exec_path = Path(exec_dir).resolve()
+        logger.info("Single-tenant mode: exec_dir=%s", exec_path)
 
     app = FastAPI(title="context-agent")
 
-    # Add signature verification middleware if enabled
+    # Signature verification has been removed in favor of Cloud Run authentication
     if require_signatures:
-        from context_agent.signature_middleware import verify_request_signature
-        app.middleware("http")(verify_request_signature)
+        logger.error(
+            "Signature verification is no longer supported. "
+            "Use Cloud Run IAM or API Gateway authentication instead."
+        )
+        raise ValueError("require_signatures flag is deprecated and no longer supported")
 
     @app.post("/agent")
     async def run_agent_endpoint(request: Request) -> Response:
-        deps = AgentDeps(exec_dir=exec_dir, allowed_domains=domains)
+        if session_mode:
+            session_id = _extract_session_id(request)
+            if not session_id:
+                raise HTTPException(status_code=400, detail="Missing X-Session-ID header")
+
+            session_dir = _get_session_dir(session_id, sessions_base)
+            _initialize_session_dir(session_dir, template_path)
+            session_exec_dir = str(session_dir)
+            logger.debug("Using session directory: %s", session_exec_dir)
+        else:
+            session_exec_dir = exec_dir
+
+        deps = AgentDeps(exec_dir=session_exec_dir, allowed_domains=domains)
         return await AGUIAdapter.dispatch_request(request, agent=agent, deps=deps)
 
     @app.post("/update")
-    async def update_file(body: UpdateFileRequest) -> JSONResponse:
+    async def update_file(request: Request, body: UpdateFileRequest) -> JSONResponse:
+        # Determine the exec directory based on mode
+        if session_mode:
+            session_id = _extract_session_id(request)
+            if not session_id:
+                raise HTTPException(status_code=400, detail="Missing X-Session-ID header")
+
+            session_dir = _get_session_dir(session_id, sessions_base)
+            _initialize_session_dir(session_dir, template_path)
+            current_exec_path = session_dir
+        else:
+            current_exec_path = exec_path
+
         # Resolve target path and ensure it stays within exec_dir
-        target = (exec_path / body.path.lstrip("/")).resolve()
+        target = (current_exec_path / body.path.lstrip("/")).resolve()
         try:
-            target.relative_to(exec_path)
+            target.relative_to(current_exec_path)
         except ValueError:
             raise HTTPException(status_code=400, detail="Path must be within the exec directory")
 
@@ -111,12 +196,57 @@ def create_app(exec_dir: str, allowed_domains: list[str] | None = None, require_
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body.content, encoding="utf-8")
         logger.info("Updated file: %s", target)
-        return JSONResponse({"updated": str(target.relative_to(exec_path))})
+        return JSONResponse({"updated": str(target.relative_to(current_exec_path))})
+
+    @app.get("/files")
+    async def list_files(request: Request) -> JSONResponse:
+        # Determine the exec directory based on mode
+        if session_mode:
+            session_id = _extract_session_id(request)
+            if not session_id:
+                raise HTTPException(status_code=400, detail="Missing X-Session-ID header")
+
+            session_dir = _get_session_dir(session_id, sessions_base)
+            if not session_dir.exists():
+                return JSONResponse({"files": {}})
+            current_exec_path = session_dir
+        else:
+            current_exec_path = exec_path
+
+        # List all files in the directory (recursively)
+        file_contents: dict[str, str] = {}
+        try:
+            for item in current_exec_path.rglob("*"):
+                if item.is_file() and not item.name.startswith("_runner_"):
+                    try:
+                        relative_path = item.relative_to(current_exec_path)
+                        # Only include allowed extensions
+                        if item.suffix.lower() in _ALLOWED_EXTENSIONS:
+                            content = item.read_text(encoding="utf-8")
+                            file_contents[str(relative_path)] = content
+                    except Exception as e:
+                        logger.warning("Failed to read file %s: %s", item, e)
+                        continue
+        except Exception as e:
+            logger.error("Failed to list files: %s", e)
+            raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
+        return JSONResponse({"files": file_contents})
 
     async def chat_fn(
         message: str, history: list[dict]
     ) -> AsyncGenerator[list, None]:
         logger.info("chat_fn invoked: message=%r, history_len=%d", message, len(history))
+
+        # In session mode, create a temporary Gradio session
+        if session_mode:
+            gradio_session_id = f"gradio-{uuid_module.uuid4()}"
+            session_dir = _get_session_dir(gradio_session_id, sessions_base)
+            _initialize_session_dir(session_dir, template_path)
+            gradio_exec_dir = str(session_dir)
+            logger.info("Created temporary Gradio session: %s", gradio_session_id)
+        else:
+            gradio_exec_dir = exec_dir
 
         ag_ui_messages = _gradio_history_to_agui(history, message)
         logger.info("Built %d AG-UI messages", len(ag_ui_messages))
@@ -130,7 +260,7 @@ def create_app(exec_dir: str, allowed_domains: list[str] | None = None, require_
             context=[],
             forwarded_props=None,
         )
-        deps = AgentDeps(exec_dir=exec_dir, allowed_domains=domains)
+        deps = AgentDeps(exec_dir=gradio_exec_dir, allowed_domains=domains)
         adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
         gradio_messages: list[dict] = []
