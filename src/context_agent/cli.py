@@ -39,6 +39,12 @@ def cli() -> None:
     default=None,
     help="Template directory to copy files from when initializing new sessions (session-mode only)",
 )
+@click.option(
+    "--read-only",
+    is_flag=True,
+    default=False,
+    help="Enable read-only mode (single-tenant default; session-mode uses X-Read-Only header)",
+)
 def serve(
     exec_dir: str | None,
     allowed_domains: str,
@@ -47,6 +53,7 @@ def serve(
     require_signatures: bool,
     session_mode: bool,
     template_dir: str | None,
+    read_only: bool,
 ) -> None:
     """Start the context-agent server with web UI."""
     import uvicorn
@@ -83,6 +90,7 @@ def serve(
         require_signatures=require_signatures,
         session_mode=session_mode,
         template_dir=template_dir,
+        read_only_default=read_only,
     )
 
     click.echo(f"Starting context-agent at http://{host}:{port}")
@@ -91,8 +99,11 @@ def serve(
         click.echo(f"  sessions base dir: {exec_dir or '/tmp/sessions'}")
         if template_dir:
             click.echo(f"  template dir: {template_dir}")
+        click.echo("  read-only: Determined per-request via X-Read-Only header")
     else:
         click.echo(f"  exec_dir: {exec_dir}")
+        if read_only:
+            click.echo("  read-only mode: ENABLED (default; X-Read-Only header can override)")
     if require_signatures:
         click.echo("  signature verification: ENABLED (deprecated)")
     uvicorn.run(app, host=host, port=port)
@@ -106,7 +117,13 @@ def serve(
     default="",
     help="Comma-separated list of domains for Deno network access",
 )
-def run(exec_dir: str, prompt: str, allowed_domains: str) -> None:
+@click.option(
+    "--read-only",
+    is_flag=True,
+    default=False,
+    help="Enable read-only mode (no write operations)",
+)
+def run(exec_dir: str, prompt: str, allowed_domains: str, read_only: bool) -> None:
     """Run a single prompt through the agent and print the result."""
     from context_agent.agent import AgentDeps, agent
 
@@ -117,7 +134,7 @@ def run(exec_dir: str, prompt: str, allowed_domains: str) -> None:
         )
 
     domains = [d.strip() for d in allowed_domains.split(",") if d.strip()]
-    deps = AgentDeps(exec_dir=exec_dir, allowed_domains=domains)
+    deps = AgentDeps(exec_dir=exec_dir, allowed_domains=domains, read_only=read_only)
 
     async def _run() -> str:
         result = await agent.run(prompt, deps=deps)

@@ -85,6 +85,7 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
   const agMsgs = useSignal<AgMsg[]>([]);
   const inputText = useSignal<string>("");
   const isStreaming = useSignal(false);
+  const readOnlyMode = useSignal(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -333,9 +334,14 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
     agMsgs.value = msgs;
 
     try {
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (readOnlyMode.value) {
+        headers["X-Read-Only"] = "true";
+      }
+
       const resp = await fetch("/api/agent", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers,
         body: JSON.stringify({
           thread_id: crypto.randomUUID(),
           run_id: crypto.randomUUID(),
@@ -755,7 +761,20 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
                 }}
                 onKeyDown={handleKeyDown}
               />
-              <div class="chat-hint">Shift+Enter to send</div>
+              <div class="chat-hint" style="display:flex;justify-content:space-between;align-items:center">
+                <span>Shift+Enter to send</span>
+                <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;user-select:none">
+                  <input
+                    type="checkbox"
+                    checked={readOnlyMode.value}
+                    onChange={(e) => {
+                      readOnlyMode.value = (e.target as HTMLInputElement).checked;
+                    }}
+                    style="cursor:pointer"
+                  />
+                  <span style="font-size:0.8rem;color:var(--text-dim)">Read-only mode</span>
+                </label>
+              </div>
             </div>
           </div>
         </div>

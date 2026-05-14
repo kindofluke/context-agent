@@ -1,23 +1,26 @@
 from __future__ import annotations
 
-import json
 import logging
 import logging.config
-import shutil
-import uuid as uuid_module
 from pathlib import Path
-from typing import AsyncGenerator
 
 import gradio as gr
-from ag_ui.core import AssistantMessage, EventType, RunAgentInput, UserMessage
+from ag_ui.core import RunAgentInput
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 from starlette.requests import Request
 from starlette.responses import Response
 
 from context_agent.agent import AgentDeps, agent
+from context_agent.session import (
+    UpdateFileRequest,
+    _ALLOWED_EXTENSIONS,
+    _extract_session_id,
+    _get_session_dir,
+    _initialize_session_dir,
+)
+from context_agent.ui import create_gradio_interface
 
 logging.config.dictConfig({
     "version": 1,
@@ -34,79 +37,16 @@ logging.config.dictConfig({
 logger = logging.getLogger(__name__)
 
 
-def _extract_text(content: object) -> str:
-    """Normalise Gradio content to a plain string."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            item["text"] if isinstance(item, dict) and item.get("type") == "text" else str(item)
-            for item in content
-        )
-    if isinstance(content, dict) and content.get("type") == "text":
-        return content["text"]
-    return str(content)
+def _parse_read_only_header(request: Request) -> bool | None:
+    """Parse X-Read-Only header from request.
 
-
-def _gradio_history_to_agui(history: list[dict], current_message: str) -> list:
-    """Convert Gradio chat history + current message to a list of AG-UI Message objects."""
-    msgs = []
-    for item in history:
-        role = item.get("role") if isinstance(item, dict) else item[0]
-        raw_content = item.get("content") if isinstance(item, dict) else item[1]
-        metadata = item.get("metadata") if isinstance(item, dict) else None
-        if metadata:  # tool-call accordion — display only, not real history
-            continue
-        if not raw_content:
-            continue
-        content = _extract_text(raw_content)
-        if not content:
-            continue
-        if role == "user":
-            msgs.append(UserMessage(id=str(uuid_module.uuid4()), content=content))
-        elif role == "assistant":
-            msgs.append(AssistantMessage(id=str(uuid_module.uuid4()), content=content))
-    msgs.append(UserMessage(id=str(uuid_module.uuid4()), content=current_message))
-    return msgs
-
-
-_ALLOWED_EXTENSIONS = {".js", ".yaml", ".yml", ".md"}
-
-
-class UpdateFileRequest(BaseModel):
-    path: str
-    content: str
-
-
-def _get_session_dir(session_id: str, base_dir: Path) -> Path:
-    """Get the session directory path for a given session ID."""
-    return base_dir / session_id
-
-
-def _initialize_session_dir(session_dir: Path, template_dir: Path | None) -> None:
-    """Initialize a session directory by copying template files if provided."""
-    if session_dir.exists():
-        logger.debug("Session directory already exists: %s", session_dir)
-        return
-
-    session_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Created session directory: %s", session_dir)
-
-    if template_dir and template_dir.exists():
-        logger.info("Copying template files from %s to %s", template_dir, session_dir)
-        for item in template_dir.iterdir():
-            if item.is_file():
-                shutil.copy2(item, session_dir / item.name)
-            elif item.is_dir():
-                shutil.copytree(item, session_dir / item.name, dirs_exist_ok=True)
-        logger.info("Template files copied successfully")
-    else:
-        logger.info("No template directory provided or template directory does not exist")
-
-
-def _extract_session_id(request: Request) -> str | None:
-    """Extract session ID from request headers."""
-    return request.headers.get("x-session-id")
+    Returns:
+        True if header is present and truthy, False if present and falsy, None if not present
+    """
+    header_value = request.headers.get("x-read-only")
+    if header_value is None:
+        return None
+    return header_value.lower() in ("true", "1", "yes")
 
 
 def create_app(
@@ -115,6 +55,7 @@ def create_app(
     require_signatures: bool = False,
     session_mode: bool = False,
     template_dir: str | None = None,
+    read_only_default: bool = False,
 ) -> FastAPI:
     """Create the FastAPI application.
 
@@ -124,6 +65,7 @@ def create_app(
         require_signatures: Enable HMAC signature verification (deprecated, use auth at proxy layer)
         session_mode: Enable multi-tenant session mode with per-session directories
         template_dir: Template directory to copy files from when initializing new sessions
+        read_only_default: Default read-only mode for single-tenant (ignored in session mode)
     """
     domains = allowed_domains or []
 
@@ -163,11 +105,34 @@ def create_app(
         else:
             session_exec_dir = exec_dir
 
-        deps = AgentDeps(exec_dir=session_exec_dir, allowed_domains=domains)
+        # Determine read-only mode
+        # In session mode: only use header (no default)
+        # In single-tenant: use header if present, else use default
+        read_only_header = _parse_read_only_header(request)
+        if session_mode:
+            read_only = read_only_header if read_only_header is not None else False
+        else:
+            read_only = read_only_header if read_only_header is not None else read_only_default
+
+        logger.debug("Read-only mode: %s", read_only)
+        deps = AgentDeps(exec_dir=session_exec_dir, allowed_domains=domains, read_only=read_only)
         return await AGUIAdapter.dispatch_request(request, agent=agent, deps=deps)
 
     @app.post("/update")
     async def update_file(request: Request, body: UpdateFileRequest) -> JSONResponse:
+        # Check read-only mode
+        read_only_header = _parse_read_only_header(request)
+        if session_mode:
+            read_only = read_only_header if read_only_header is not None else False
+        else:
+            read_only = read_only_header if read_only_header is not None else read_only_default
+
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail="Write operations are disabled in read-only mode",
+            )
+
         # Determine the exec directory based on mode
         if session_mode:
             session_id = _extract_session_id(request)
@@ -233,105 +198,14 @@ def create_app(
 
         return JSONResponse({"files": file_contents})
 
-    async def chat_fn(
-        message: str, history: list[dict]
-    ) -> AsyncGenerator[list, None]:
-        logger.info("chat_fn invoked: message=%r, history_len=%d", message, len(history))
-
-        # In session mode, create a temporary Gradio session
-        if session_mode:
-            gradio_session_id = f"gradio-{uuid_module.uuid4()}"
-            session_dir = _get_session_dir(gradio_session_id, sessions_base)
-            _initialize_session_dir(session_dir, template_path)
-            gradio_exec_dir = str(session_dir)
-            logger.info("Created temporary Gradio session: %s", gradio_session_id)
-        else:
-            gradio_exec_dir = exec_dir
-
-        ag_ui_messages = _gradio_history_to_agui(history, message)
-        logger.info("Built %d AG-UI messages", len(ag_ui_messages))
-
-        run_input = RunAgentInput(
-            thread_id=str(uuid_module.uuid4()),
-            run_id=str(uuid_module.uuid4()),
-            state={},
-            messages=ag_ui_messages,
-            tools=[],
-            context=[],
-            forwarded_props=None,
-        )
-        deps = AgentDeps(exec_dir=gradio_exec_dir, allowed_domains=domains)
-        adapter = AGUIAdapter(agent=agent, run_input=run_input)
-
-        gradio_messages: list[dict] = []
-        text_msg_index: dict[str, int] = {}  # message_id -> index in gradio_messages
-        tool_args_buf: dict[str, str] = {}   # tool_call_id -> accumulated JSON args
-        tool_msg_index: dict[str, int] = {}  # tool_call_id -> index in gradio_messages
-
-        try:
-            async for event in adapter.run_stream(deps=deps):
-                etype = event.type
-                logger.debug("AG-UI event: %s", etype)
-
-                if etype == EventType.TEXT_MESSAGE_START:
-                    logger.info("Text message start: id=%s", event.message_id)
-                    for msg in gradio_messages:
-                        if msg.get("metadata", {}).get("status") == "pending":
-                            msg["metadata"]["status"] = "done"
-                    text_msg_index[event.message_id] = len(gradio_messages)
-                    gradio_messages.append({"role": "assistant", "content": ""})
-
-                elif etype == EventType.TEXT_MESSAGE_CONTENT:
-                    idx = text_msg_index.get(event.message_id)
-                    if idx is not None:
-                        gradio_messages[idx]["content"] += event.delta
-                        yield gradio_messages
-
-                elif etype == EventType.TOOL_CALL_START:
-                    logger.info("Tool call start: %s (id=%s)", event.tool_call_name, event.tool_call_id)
-                    tool_args_buf[event.tool_call_id] = ""
-                    tool_msg_index[event.tool_call_id] = len(gradio_messages)
-                    gradio_messages.append({
-                        "role": "assistant",
-                        "content": "",
-                        "metadata": {"title": f"🔧 {event.tool_call_name}", "status": "pending"},
-                    })
-                    yield gradio_messages
-
-                elif etype == EventType.TOOL_CALL_ARGS:
-                    tool_args_buf[event.tool_call_id] = tool_args_buf.get(event.tool_call_id, "") + event.delta
-
-                elif etype == EventType.TOOL_CALL_END:
-                    tid = event.tool_call_id
-                    logger.info("Tool call end: id=%s", tid)
-                    idx = tool_msg_index.get(tid)
-                    if idx is not None:
-                        try:
-                            args = json.loads(tool_args_buf.get(tid, "{}"))
-                            js_code = args.get("js_code", tool_args_buf.get(tid, ""))
-                        except (json.JSONDecodeError, KeyError):
-                            js_code = tool_args_buf.get(tid, "")
-                        gradio_messages[idx]["content"] = f"```javascript\n{js_code}\n```"
-                        yield gradio_messages
-
-                elif etype == EventType.RUN_FINISHED:
-                    logger.info("Run finished")
-                    break
-
-                elif etype == EventType.RUN_ERROR:
-                    logger.error("Run error: %s", event.message)
-                    gradio_messages.append({"role": "assistant", "content": f"Error: {event.message}"})
-                    break
-
-        except Exception:
-            logger.exception("chat_fn failed")
-
-        yield gradio_messages
-
-    gradio_blocks = gr.ChatInterface(
-        fn=chat_fn,
-        title="NL Agent",
-        description="Chat with your natural language agent",
+    # Create and mount Gradio interface
+    gradio_blocks = create_gradio_interface(
+        exec_dir=exec_dir if not session_mode else None,
+        allowed_domains=domains,
+        session_mode=session_mode,
+        sessions_base=sessions_base if session_mode else None,
+        template_path=template_path if session_mode else None,
+        read_only_default=read_only_default,
     )
 
     gr.mount_gradio_app(app, gradio_blocks, path="/")
