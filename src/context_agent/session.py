@@ -24,8 +24,14 @@ def _get_session_dir(session_id: str, base_dir: Path) -> Path:
     return base_dir / session_id
 
 
-def _initialize_session_dir(session_dir: Path, template_dir: Path | None) -> None:
-    """Initialize a session directory by copying template files if provided."""
+def _initialize_session_dir(session_dir: Path, template_dir: Path | None, copy_templates: bool = True) -> None:
+    """Initialize a session directory by copying template files if provided.
+
+    Args:
+        session_dir: Directory to initialize
+        template_dir: Source directory for template files
+        copy_templates: If False, create directory but don't copy templates (useful for empty playgrounds)
+    """
     if session_dir.exists():
         logger.debug("Session directory already exists: %s", session_dir)
         return
@@ -33,7 +39,7 @@ def _initialize_session_dir(session_dir: Path, template_dir: Path | None) -> Non
     session_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Created session directory: %s", session_dir)
 
-    if template_dir and template_dir.exists():
+    if copy_templates and template_dir and template_dir.exists():
         logger.info("Copying template files from %s to %s", template_dir, session_dir)
         for item in template_dir.iterdir():
             if item.is_file():

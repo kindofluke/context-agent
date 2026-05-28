@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import logging.config
+import os
 from pathlib import Path
 
 import gradio as gr
 from ag_ui.core import RunAgentInput
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 from starlette.requests import Request
@@ -91,7 +92,16 @@ def create_app(
         )
         raise ValueError("require_signatures flag is deprecated and no longer supported")
 
-    @app.post("/agent")
+    # Get URL prefix from environment
+    url_prefix = os.getenv("URL_PREFIX", "")
+    if url_prefix:
+        logger.info("Using URL prefix: %s", url_prefix)
+
+    # Create router for API endpoints
+    router = APIRouter()
+
+    @router.post("/agent", include_in_schema=True)
+    @router.post("/agent/", include_in_schema=False)
     async def run_agent_endpoint(request: Request) -> Response:
         if session_mode:
             session_id = _extract_session_id(request)
@@ -118,7 +128,46 @@ def create_app(
         deps = AgentDeps(exec_dir=session_exec_dir, allowed_domains=domains, read_only=read_only)
         return await AGUIAdapter.dispatch_request(request, agent=agent, deps=deps)
 
-    @app.post("/update")
+    @router.post("/init", include_in_schema=True)
+    @router.post("/init/", include_in_schema=False)
+    async def init_session(request: Request) -> JSONResponse:
+        """Initialize session directory without copying template files (for empty playgrounds)."""
+        if not session_mode:
+            raise HTTPException(status_code=400, detail="Init endpoint only available in session mode")
+
+        session_id = _extract_session_id(request)
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Missing X-Session-ID header")
+
+        session_dir = _get_session_dir(session_id, sessions_base)
+        # Create directory but don't copy templates (copy_templates=False)
+        _initialize_session_dir(session_dir, template_path, copy_templates=False)
+        logger.info("Initialized empty session directory: %s", session_dir)
+        return JSONResponse({"status": "initialized", "session_id": session_id})
+
+    @router.delete("/session", include_in_schema=True)
+    @router.delete("/session/", include_in_schema=False)
+    async def delete_session(request: Request) -> Response:
+        """Delete session directory and all its contents."""
+        if not session_mode:
+            raise HTTPException(status_code=400, detail="Session endpoint only available in session mode")
+
+        session_id = _extract_session_id(request)
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Missing X-Session-ID header")
+
+        session_dir = _get_session_dir(session_id, sessions_base)
+        if session_dir.exists():
+            import shutil
+            shutil.rmtree(session_dir)
+            logger.info("Deleted session directory: %s", session_dir)
+        else:
+            logger.debug("Session directory does not exist: %s", session_dir)
+
+        return Response(status_code=204)
+
+    @router.post("/update", include_in_schema=True)
+    @router.post("/update/", include_in_schema=False)
     async def update_file(request: Request, body: UpdateFileRequest) -> JSONResponse:
         # Check read-only mode
         read_only_header = _parse_read_only_header(request)
@@ -163,7 +212,8 @@ def create_app(
         logger.info("Updated file: %s", target)
         return JSONResponse({"updated": str(target.relative_to(current_exec_path))})
 
-    @app.get("/files")
+    @router.get("/files", include_in_schema=True)
+    @router.get("/files/", include_in_schema=False)
     async def list_files(request: Request) -> JSONResponse:
         # Determine the exec directory based on mode
         if session_mode:
@@ -198,6 +248,9 @@ def create_app(
 
         return JSONResponse({"files": file_contents})
 
+    # Include router with URL prefix
+    app.include_router(router, prefix=url_prefix)
+
     # Create and mount Gradio interface
     gradio_blocks = create_gradio_interface(
         exec_dir=exec_dir if not session_mode else None,
@@ -208,6 +261,7 @@ def create_app(
         read_only_default=read_only_default,
     )
 
-    gr.mount_gradio_app(app, gradio_blocks, path="/")
+    gradio_path = f"{url_prefix}/" if url_prefix else "/"
+    gr.mount_gradio_app(app, gradio_blocks, path=gradio_path)
 
     return app

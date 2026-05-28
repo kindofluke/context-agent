@@ -28,7 +28,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/context_agent"]
-artifacts = [
-    "src/context_agent/bin/deno",
-    "src/context_agent/bin/deno.exe",
-]

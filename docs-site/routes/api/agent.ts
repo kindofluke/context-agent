@@ -3,6 +3,7 @@ import { clearSession, getSession } from "../../sandbox-state.ts";
 
 // Backend service URL (set via environment variable)
 const BACKEND_SERVICE_URL = Deno.env.get("BACKEND_SERVICE_URL") || "http://localhost:9101";
+console.log(`Agent API will proxy to backend service at: ${BACKEND_SERVICE_URL}`);
 
 /**
  * Fetch Cloud Run identity token from the metadata service for service-to-service auth.

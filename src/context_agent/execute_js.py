@@ -1,37 +1,8 @@
 import asyncio
 import os
-import shutil
-import sys
 import uuid
 
-
-def _is_native_binary(path: str) -> bool:
-    """Return True if the binary at path is executable on the current platform."""
-    try:
-        with open(path, "rb") as f:
-            magic = f.read(4)
-        if sys.platform == "darwin":
-            return magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
-        elif sys.platform == "win32":
-            return magic[:2] == b"MZ"
-        else:
-            return magic == b"\x7fELF"
-    except OSError:
-        return False
-
-
-def _get_deno_binary() -> str:
-    suffix = ".exe" if sys.platform == "win32" else ""
-    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", f"deno{suffix}")
-    if os.path.isfile(bundled) and _is_native_binary(bundled):
-        return bundled
-    fallback = shutil.which("deno")
-    if fallback:
-        return fallback
-    raise FileNotFoundError(
-        "Deno binary not found. Run `make deno-download` before building, "
-        "or install Deno manually: https://deno.land/#installation"
-    )
+from .deno_manager import get_deno_path
 
 TOOLS_JS = r"""
 const EXEC_DIR = "__EXEC_DIR__";
@@ -262,6 +233,44 @@ for await (const __entry of Deno.readDir("__EXEC_DIR__")) {
 """
 
 
+def _collect_credentials() -> list[tuple[str, str]]:
+    """Collect all CT_PY_* and NL_PY_* environment variable values for redaction.
+
+    Returns:
+        List of (var_name, value) tuples, sorted by value length (longest first)
+        to avoid partial redactions. Empty values are excluded.
+    """
+    credentials = []
+    for key, value in os.environ.items():
+        if (key.startswith("CT_PY_") or key.startswith("NL_PY_")) and value:
+            credentials.append((key, value))
+
+    # Sort by value length descending to redact longer strings first
+    credentials.sort(key=lambda x: len(x[1]), reverse=True)
+    return credentials
+
+
+def _redact_credentials(text: str, credentials: list[tuple[str, str]]) -> str:
+    """Redact credential values from text, replacing with [REDACTED:VAR_NAME].
+
+    Args:
+        text: The text to redact credentials from
+        credentials: List of (var_name, value) tuples to redact
+
+    Returns:
+        Text with all credential values replaced with redaction markers
+    """
+    if not text or not credentials:
+        return text
+
+    redacted = text
+    for var_name, value in credentials:
+        if value in redacted:
+            redacted = redacted.replace(value, f"[REDACTED:{var_name}]")
+
+    return redacted
+
+
 async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str], read_only: bool = False) -> str:
     """Execute JavaScript code in Deno runtime.
 
@@ -279,6 +288,9 @@ async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str], read_o
     runner_path = os.path.join(exec_dir, runner_name)
 
     nl_py_keys = [k for k in os.environ if k.startswith("NL_PY_") or k.startswith("CT_PY_")]
+
+    # Collect credentials for redaction to prevent leakage in outputs
+    credentials = _collect_credentials()
 
     # Choose tool set based on read-only mode
     tools_js = TOOLS_JS_READ_ONLY if read_only else TOOLS_JS
@@ -299,7 +311,7 @@ async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str], read_o
         with open(runner_path, "w") as f:
             f.write(runner_script)
 
-        cmd = [_get_deno_binary(), "run"]
+        cmd = [get_deno_path(), "run"]
         cmd += [f"--allow-read={exec_dir}"]
         # Only add write permission if not in read-only mode
         if not read_only:
@@ -325,8 +337,11 @@ async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str], read_o
             return "Error: execution timed out after 30 seconds"
 
         if proc.returncode != 0:
-            return f"Error (exit {proc.returncode}):\n{stderr.decode().strip()}"
-        return stdout.decode().strip() or "(no output)"
+            stderr_text = stderr.decode().strip()
+            return f"Error (exit {proc.returncode}):\n{_redact_credentials(stderr_text, credentials)}"
+
+        stdout_text = stdout.decode().strip() or "(no output)"
+        return _redact_credentials(stdout_text, credentials)
 
     finally:
         try:

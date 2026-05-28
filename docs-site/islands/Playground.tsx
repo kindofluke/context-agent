@@ -51,13 +51,6 @@ function fileIcon(name: string): { icon: string; cls: string } {
   return { icon: "·", cls: "" };
 }
 
-function getAddLabel(path: string): string {
-  if (path === "SystemPrompt.md") return "Add a System Prompt";
-  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-  if (ext === "yaml" || ext === "yml") return "Add a web service";
-  if (ext === "js") return "Add Tools with JS";
-  return "Add more Context";
-}
 
 const RETRY_SECONDS = 15;
 
@@ -86,6 +79,10 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
   const inputText = useSignal<string>("");
   const isStreaming = useSignal(false);
   const readOnlyMode = useSignal(false);
+  const showNewFileModal = useSignal(false);
+  const newFilePath = useSignal<string>("");
+  const newFileError = useSignal<string>("");
+  const isDownloading = useSignal(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -194,6 +191,17 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
 
       // Wait for minimum boot time before transitioning to ready
       if (readyReceived) {
+        // If starting with no files, initialize an empty session directory
+        // This prevents template files from being copied when the user creates their first file
+        if (Object.keys(initialFiles).length === 0) {
+          try {
+            await fetch("/api/init", { method: "POST" });
+            bootLog.value = [...bootLog.value, "Empty session initialized"];
+          } catch (err) {
+            console.warn("Failed to initialize empty session:", err);
+          }
+        }
+
         const elapsed = Date.now() - bootStartTimeRef.current;
         const remaining = MIN_BOOT_TIME_MS - elapsed;
 
@@ -316,7 +324,126 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
     }
   }
 
+  // ── Create new file with custom path ───────────────
+
+  async function createNewFile() {
+    const path = newFilePath.value.trim();
+    if (!path) {
+      newFileError.value = "Please enter a file path";
+      return;
+    }
+
+    // Basic validation
+    if (path.startsWith("/") || path.includes("..")) {
+      newFileError.value = "Invalid path: must be relative and not contain '..'";
+      return;
+    }
+
+    if (fileContents.value[path] !== undefined) {
+      newFileError.value = "File already exists";
+      return;
+    }
+
+    isAdding.value = true;
+    newFileError.value = "";
+
+    try {
+      // Determine default content based on extension
+      const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+      let content = "";
+      if (ext === "md") {
+        content = `# ${path.split("/").pop()?.replace(/\.md$/, "") ?? "New File"}\n\n`;
+      } else if (ext === "js" || ext === "ts") {
+        content = "// New file\n\n";
+      }
+
+      const resp = await fetch("/api/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path, content }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw new Error(err.detail ?? err.error ?? "Failed to create file");
+      }
+
+      fileContents.value = { ...fileContents.value, [path]: content };
+      selectFile(path);
+      showNewFileModal.value = false;
+      newFilePath.value = "";
+    } catch (err) {
+      newFileError.value = (err as Error).message;
+    } finally {
+      isAdding.value = false;
+    }
+  }
+
+  function openNewFileModal() {
+    newFilePath.value = "";
+    newFileError.value = "";
+    showNewFileModal.value = true;
+  }
+
+  function closeNewFileModal() {
+    showNewFileModal.value = false;
+    newFilePath.value = "";
+    newFileError.value = "";
+  }
+
+  function handleNewFileKeyDown(e: KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      createNewFile();
+    } else if (e.key === "Escape") {
+      closeNewFileModal();
+    }
+  }
+
+  // ── Download all files as ZIP ─────────────────────
+
+  async function downloadAllFiles() {
+    if (isDownloading.value) return;
+    isDownloading.value = true;
+
+    try {
+      // Dynamic import to avoid SSR issues - only loads in browser
+      const { ZipWriter, BlobWriter, TextReader } = await import("@zip-js/zip-js");
+
+      // Create a BlobWriter to write the zip file to a blob
+      const blobWriter = new BlobWriter("application/zip");
+      const zipWriter = new ZipWriter(blobWriter);
+
+      // Add all files to the ZIP
+      for (const [path, content] of Object.entries(fileContents.value)) {
+        await zipWriter.add(path, new TextReader(content));
+      }
+
+      // Close the writer and get the blob
+      const blob = await zipWriter.close();
+
+      // Create a download link and trigger it
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "context-agent-files.zip";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to download files:", err);
+    } finally {
+      isDownloading.value = false;
+    }
+  }
+
   // ── Chat ──────────────────────────────────────────
+
+  function clearChat() {
+    blocks.value = [];
+    agMsgs.value = [];
+    inputText.value = "";
+  }
 
   async function sendMessage() {
     const text = inputText.value.trim();
@@ -630,9 +757,9 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
               ))}
             </div>
 
-            {/* Add file dropdown */}
-            {addableKeys.length > 0 && (
-              <div class="add-file-wrap">
+            {/* Add file controls */}
+            <div class="add-file-wrap">
+              {addableKeys.length > 0 && (
                 <select
                   class="add-file-select"
                   disabled={isAdding.value}
@@ -645,11 +772,28 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
                 >
                   <option value="">{isAdding.value ? "Adding…" : "+ Add file…"}</option>
                   {addableKeys.map((path) => (
-                    <option key={path} value={path}>{getAddLabel(path)}</option>
+                    <option key={path} value={path}>{path}</option>
                   ))}
                 </select>
-              </div>
-            )}
+              )}
+              <button
+                class="btn-save"
+                style="width:100%;margin-top:0.5rem;font-size:0.85rem"
+                onClick={openNewFileModal}
+                disabled={isAdding.value}
+              >
+                + Create New File
+              </button>
+              <button
+                class="btn-save"
+                style="width:100%;margin-top:0.5rem;font-size:0.85rem"
+                onClick={downloadAllFiles}
+                disabled={isDownloading.value}
+                title="Download all files as ZIP"
+              >
+                {isDownloading.value ? "Downloading…" : "↓ Download All"}
+              </button>
+            </div>
           </div>
 
           {/* ── Middle: editor ── */}
@@ -703,7 +847,17 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
 
           {/* ── Right: chat ── */}
           <div class="pane-chat">
-            <div class="pane-label">Agent Chat</div>
+            <div class="pane-label" style="display:flex;justify-content:space-between;align-items:center">
+              <span>Agent Chat</span>
+              <button
+                class="btn-save"
+                style="font-size:0.8rem;padding:0.25rem 0.5rem"
+                onClick={clearChat}
+                title="Clear chat history"
+              >
+                Clear
+              </button>
+            </div>
             <div class="chat-messages">
               {blocks.value.map((block) => {
                 if (block.kind === "user") {
@@ -775,6 +929,51 @@ export default function Playground({ initialFiles, addableFiles }: Props) {
                   <span style="font-size:0.8rem;color:var(--text-dim)">Read-only mode</span>
                 </label>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New File Modal */}
+      {showNewFileModal.value && (
+        <div class="modal-overlay" onClick={closeNewFileModal}>
+          <div class="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div class="modal-header">
+              <h3 style="margin:0;font-size:1rem;font-weight:600">Create New File</h3>
+              <button class="modal-close" onClick={closeNewFileModal} title="Close">×</button>
+            </div>
+            <div class="modal-body">
+              <label style="display:block;margin-bottom:0.5rem;font-size:0.9rem;color:var(--text-dim)">
+                File path (e.g., "somedir/newfile.md")
+              </label>
+              <input
+                type="text"
+                class="modal-input"
+                value={newFilePath.value}
+                placeholder="path/to/file.md"
+                onInput={(e) => {
+                  newFilePath.value = (e.target as HTMLInputElement).value;
+                  newFileError.value = "";
+                }}
+                onKeyDown={handleNewFileKeyDown}
+                autoFocus
+              />
+              {newFileError.value && (
+                <div class="modal-error">{newFileError.value}</div>
+              )}
+            </div>
+            <div class="modal-footer">
+              <button class="btn-save" onClick={closeNewFileModal} disabled={isAdding.value}>
+                Cancel
+              </button>
+              <button
+                class="btn-save"
+                style="background:var(--accent);color:white"
+                onClick={createNewFile}
+                disabled={isAdding.value || !newFilePath.value.trim()}
+              >
+                {isAdding.value ? "Creating…" : "Create"}
+              </button>
             </div>
           </div>
         </div>
