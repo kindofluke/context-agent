@@ -8,6 +8,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "About", href: "/" },
   { label: "Getting Started", href: "/getting-started" },
+  { label: "How to Use", href: "/how-to-use" },
   { label: "CLI Documentation", href: "/command-line" },
   { label: "Playground", href: "/playground" },
 ];

@@ -45,6 +45,6 @@ EXPOSE 8080
 CMD uv run ct-agent serve \
     --session-mode \
     --template-dir /app/template \
-    --allowed-domains api.stlouisfed.org \
+    --allowed-domains "api.stlouisfed.org,openlibrary.org" \
     --port ${PORT:-8080} \
     --host 0.0.0.0

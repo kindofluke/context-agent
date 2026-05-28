@@ -16,3 +16,4 @@ pydantic-documentation
 src/context_agent/bin/deno
 src/context_agent/bin/deno.exe
 
+workflow-testing

@@ -28,7 +28,8 @@
     "@types/babel__core": "npm:@types/babel__core@^7.20.5",
     "@deno/sandbox": "jsr:@deno/sandbox@^0.13.2",
     "tailwindcss": "npm:tailwindcss@^3.4.1",
-    "autoprefixer": "npm:autoprefixer@^10.4.17"
+    "autoprefixer": "npm:autoprefixer@^10.4.17",
+    "@zip-js/zip-js": "jsr:@zip-js/zip-js@^2.7.52", 
   },
   "compilerOptions": {
     "lib": [
