@@ -316,7 +316,6 @@ async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str], read_o
         # Only add write permission if not in read-only mode
         if not read_only:
             cmd += [f"--allow-write={exec_dir}"]
-        cmd += ["--deny-read=.env"]
         if allowed_domains:
             cmd += [f"--allow-net={','.join(allowed_domains)}"]
         if nl_py_keys:
@@ -330,11 +329,11 @@ async def run_js(exec_dir: str, js_code: str, allowed_domains: list[str], read_o
             env=os.environ.copy(),
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.communicate()
-            return "Error: execution timed out after 30 seconds"
+            return "Error: execution timed out after 120 seconds"
 
         if proc.returncode != 0:
             stderr_text = stderr.decode().strip()
